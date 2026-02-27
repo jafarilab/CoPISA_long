@@ -10,7 +10,7 @@ output:
 ---
 
 ## Load Library
-```{r, eval=FALSE, echo =FALSE, message=FALSE}
+```{r, eval=FALSE, echo =FALSE, message=FALSE, warning=FALSE}
 library(rpx)
 library(msdata)
 library(Spectra)
@@ -31,6 +31,428 @@ library(ggrepel)
 library(data.table)
 ```
 
-## Import raw peptide table
+## 1. Read evidence.txt
 ```{r}
 library(data.table)
+## Read raw peptide TSV
+evidence <- read_tsv("/Users/nvd448/Documents/VenAza Project/evidence.txt", show_col_types = FALSE)
+
+setDT(evidence)
+```
+
+## 2. Identify TMT reporter intensity columns and Mapping metadata
+```{r}
+evidence <- evidence[(is.na(Reverse) | Reverse != "+") & (is.na(`Potential contaminant`) | `Potential contaminant` != "+")]
+tmt_cols <- grep("^Reporter intensity corrected", colnames(evidence), value = TRUE)
+evidence <- evidence[rowSums(as.matrix(evidence[, tmt_cols, with = FALSE])) > 0, ]
+
+library (readxl)
+map <- read_excel("~/Documents/VenAza Project/5LABELS_CoPISA_E4.xlsx", sheet = "Sheet1" )
+
+```
+
+## 3. Build assay matrices
+```{r}
+
+library(data.table)
+library(dplyr)
+library(stringr)
+library(tibble)
+library(QFeatures)
+library(SummarizedExperiment)
+
+setDT(evidence)
+
+# ---------------------
+# Step 1: Filter evidence
+# ---------------------
+evidence <- evidence[(is.na(Reverse) | Reverse != "+") &
+                     (is.na(`Potential contaminant`) | `Potential contaminant` != "+")]
+
+tmt_cols <- grep("^Reporter intensity corrected", colnames(evidence), value = TRUE)
+
+evidence <- evidence[
+  rowSums(as.matrix(evidence[, tmt_cols, with = FALSE])) > 0
+]
+
+# ---------------------
+# Step 2: Prepare sample annotation
+# ---------------------
+sample_annotation <- map %>%
+  select(label, treatment, cell, `repeat`, sample, Experiment) %>%
+  distinct() %>%
+  filter(`Experiment` != 4) %>% 
+  mutate(
+    TMT_channel = str_replace(label, "TMTpro-", "TMT"),
+    TMT_channel = gsub(" ", "", TMT_channel),
+    Experiment = paste0("Kit", Experiment)
+  )
+
+# ---------------------
+# Step 3: Define TMTpro 16plex channel order
+# ---------------------
+channel_map <- c(
+  "TMT126","TMT127N","TMT127C","TMT128N",
+  "TMT128C","TMT129N","TMT129C","TMT130N",
+  "TMT130C","TMT131N","TMT131C","TMT132N",
+  "TMT132C","TMT133N","TMT133C","TMT134N"
+)
+
+# ---------------------
+# Step 4: Build QFeatures object
+# ---------------------
+qf <- QFeatures()
+
+experiments <- unique(evidence$Experiment)
+
+for (exp in experiments) {
+  
+  message("Processing: ", exp)
+  
+  exp_data <- evidence[Experiment == exp]
+  
+  tmt_cols_exp <- grep("^Reporter intensity corrected",
+                       colnames(exp_data),
+                       value = TRUE)
+  
+  # Safety check
+  stopifnot(length(tmt_cols_exp) == 16)
+  
+  # ---- Match annotation to channels ----
+  used_channels <- sample_annotation %>%
+    filter(Experiment == exp) %>%
+    pull(TMT_channel)
+  
+  keep_idx <- match(used_channels, channel_map)
+  keep_idx <- keep_idx[!is.na(keep_idx)]
+  
+  # ---- Subset intensity columns ----
+  exp_subset <- exp_data[, tmt_cols_exp[keep_idx], with = FALSE]
+  
+  mat <- as.matrix(exp_subset)
+  mode(mat) <- "numeric"
+  
+  colnames(mat) <- paste0(exp, "_", used_channels)
+  
+  stopifnot(ncol(mat) == length(used_channels))
+  
+  # ---------------------
+  # rowData
+  # ---------------------
+  row_data_exp <- DataFrame(
+    Sequence        = exp_data$Sequence,
+    ModifiedSeq     = exp_data$`Modified sequence`,
+    Proteins        = exp_data$Proteins,
+    LeadingProtein  = exp_data$`Leading proteins`,
+    GeneNames       = exp_data$`Gene names`,
+    Charge          = exp_data$Charge,
+    PEP             = exp_data$PEP,
+    Score           = exp_data$Score,
+    RawFile         = exp_data$`Raw file`,
+    Experiment      = exp_data$Experiment,
+    Reverse         = exp_data$Reverse,
+    Contaminant     = exp_data$`Potential contaminant`
+  )
+  
+  rownames(row_data_exp) <- exp_data$id
+  
+  # ---------------------
+  # colData
+  # ---------------------
+  col_data_exp <- sample_annotation %>%
+    filter(Experiment == exp & TMT_channel %in% used_channels) %>%
+    mutate(colname = paste0(Experiment, "_", TMT_channel)) %>%
+    arrange(match(TMT_channel, used_channels)) %>%
+    column_to_rownames("colname") %>%
+    DataFrame()
+  
+  stopifnot(ncol(mat) == nrow(col_data_exp))
+  
+  # ---------------------
+  # Create SummarizedExperiment
+  # ---------------------
+  se_exp <- SummarizedExperiment(
+    assays  = list(intensity = mat),
+    rowData = row_data_exp,
+    colData = col_data_exp
+  )
+  
+  qf[[exp]] <- se_exp
+}
+
+# ---------------------
+# Inspect result
+# ---------------------
+qf
+names(qf)
+```
+
+Inspect
+```{r}
+qf
+summary(qf)
+class(qf)
+names(qf)
+colData(qf)
+rowData(qf)
+anyNA(assay(qf))
+```
+
+## 4. Normalize psm intensities
+
+```{r}
+library(matrixStats)
+
+psm_sets <- names(qf)
+
+for (psm_name in psm_sets) {
+  
+  message("Processing normalization: ", psm_name)
+  
+  # -------------------------
+  # 1) Extract raw assay
+  # -------------------------
+  raw_assay <- assay(qf[[psm_name]])
+  raw_assay <- as.matrix(raw_assay)
+  
+  # -------------------------
+  # 2) Fraction of column total
+  # -------------------------
+  frac_assay <- sweep(raw_assay, 2,
+                      colSums(raw_assay, na.rm = TRUE),
+                      FUN = "/")
+  
+  scaled_assay <- frac_assay * 1e6
+  
+  frac_name <- paste0(psm_name, "_frac")
+  
+  qf[[frac_name]] <- SummarizedExperiment(
+    assays  = list(intensity = scaled_assay),
+    rowData = rowData(qf[[psm_name]]),
+    colData = colData(qf[[psm_name]])
+  )
+  
+  qf <- addAssayLinkOneToOne(qf,
+                             from = psm_name,
+                             to   = frac_name)
+  
+  # -------------------------
+  # 3) Add pseudocount
+  # -------------------------
+  frac_pc <- scaled_assay + 1e-6
+  
+  frac_pc_name <- paste0(psm_name, "_frac_pc")
+  
+  qf[[frac_pc_name]] <- SummarizedExperiment(
+    assays  = list(intensity = frac_pc),
+    rowData = rowData(qf[[frac_name]]),
+    colData = colData(qf[[frac_name]])
+  )
+  
+  qf <- addAssayLinkOneToOne(qf,
+                             from = frac_name,
+                             to   = frac_pc_name)
+  
+  # -------------------------
+  # 4) log2 transform
+  # -------------------------
+  log_name <- paste0(psm_name, "_log")
+  
+  qf <- logTransform(
+    qf,
+    i    = frac_pc_name,
+    name = log_name
+  )
+  
+  # -------------------------
+  # 5) Quantile normalize
+  # -------------------------
+  norm_name <- paste0(psm_name, "_norm")
+  
+  qf <- normalize(
+    qf,
+    i      = log_name,
+    name   = norm_name,
+    method = "quantiles"
+  )
+}
+
+```
+
+## 5. Aggregation
+```{r}
+norm_sets <- grep("_norm$", names(qf), value = TRUE)
+
+for (norm_name in norm_sets) {
+  
+  message("Aggregating: ", norm_name)
+  
+  # -------------------------
+  # PSM → Peptide
+  # -------------------------
+  pep_name <- paste0(norm_name, "_peptide")
+  
+  qf <- aggregateFeatures(
+    object = qf,
+    i      = norm_name,
+    fcol   = "Sequence",
+    name   = pep_name,
+    fun    = function(x)
+      matrixStats::colMedians(x, na.rm = TRUE)
+  )
+  
+  # -------------------------
+  # Peptide → Protein
+  # -------------------------
+  prot_name <- paste0(norm_name, "_protein")
+  
+  qf <- aggregateFeatures(
+    object = qf,
+    i      = pep_name,
+    fcol   = "Proteins",
+    name   = prot_name,
+    fun    = function(x)
+      matrixStats::colMedians(x, na.rm = TRUE)
+  )
+}
+```
+
+Inspect
+```{r}
+qf
+summary(qf)
+class(qf)
+names(qf)
+colData(qf)
+rowData(qf)
+anyNA(assay(qf))
+library(dplyr)
+library(purrr)
+
+qfInfo <- tibble(
+  assay  = names(qf),
+  n_rows = map_int(qf, nrow),
+  n_cols = map_int(qf, ncol)
+) %>%
+  arrange(assay)
+```
+
+## 11. Differential analysis
+
+```{r}
+library(DEP)
+library(dplyr)
+library(tidyr)
+library(S4Vectors)
+
+protein_sets <- grep("_norm_protein$", names(qf), value = TRUE)
+
+dep_results <- list()
+
+for (prot_name in protein_sets) {
+  
+  message("Running DEP for: ", prot_name)
+  
+  protein_se <- qf[[prot_name]]
+  
+  # -------------------------
+  # Build colData from existing metadata
+  # -------------------------
+  
+  col_df <- as.data.frame(colData(protein_se))
+  col_df$label     <- rownames(col_df)
+  col_df$condition <- col_df$treatment      # assuming treatment column exists
+  col_df$replicate <- col_df$`repeat`        # assuming repeat column exists
+  
+  # -------------------------
+  # Build rowData
+  # -------------------------
+  
+  row_df <- as.data.frame(rowData(protein_se))
+  row_df$name <- row_df$Proteins
+  row_df$ID   <- paste0(row_df$Proteins, "_", seq_len(nrow(row_df)))
+  
+  assay_mat <- assay(protein_se)
+  row_df <- cbind(row_df, assay_mat)
+  
+  columns <- (ncol(row_df) - ncol(assay_mat) + 1):ncol(row_df)
+  
+  # -------------------------
+  # Make DEP object
+  # -------------------------
+  
+  dep <- make_se(row_df, columns, col_df)
+  
+  # Impute
+  dep <- impute(dep, fun = "MinProb", q = 0.01)
+  
+  # Filter out 'Pool' if present
+  dep <- dep[, dep$condition != "Pool"]
+
+  # Define your control
+  control_cond <- "C"
+
+  # Run DEP comparison of all others vs control
+  dep <- test_diff(
+  dep,
+  type    = "control",
+  control = control_cond
+)
+  
+  dep <- add_rejections(dep,
+                        alpha = 0.05,
+                        lfc   = 1)
+  
+  # Store results
+  dep_results[[prot_name]] <- get_results(dep)
+}
+```
+
+```{r, warning=FALSE}
+library(ComplexUpset)
+library(ggplot2)
+library(dplyr)
+
+make_upset <- function(res, prefix) {
+  
+  # Use the significance columns directly
+  sig_df <- res %>%
+    select(name, A_vs_C_significant, V_vs_C_significant, VA_vs_C_significant) %>%
+    rename(
+      A  = A_vs_C_significant,
+      V  = V_vs_C_significant,
+      VA = VA_vs_C_significant
+    ) %>%
+    filter(A | V | VA)  # keep only proteins significant in at least one treatment
+  
+  if(nrow(sig_df) == 0){
+    message("No significant proteins to plot for ", prefix)
+    return(NULL)
+  }
+  
+  # Display in R / notebook
+  print(
+    upset(
+  sig_df,
+  names(sig_df)[-1],
+  name = "Significant proteins",
+  themes = theme_minimal()
+)
+  )
+  
+  # Save as PNG
+  png(paste0("upset_", prefix, ".png"), width = 1200, height = 800)
+  upset(
+    sig_df,
+    names(sig_df)[-1],
+    name = "Significant proteins"
+  )
+  dev.off()
+}
+
+# Run for each kit
+for (nm in names(dep_results)) {
+  make_upset(dep_results[[nm]], nm)
+}
+```
+
