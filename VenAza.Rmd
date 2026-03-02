@@ -338,8 +338,7 @@ qfInfo <- tibble(
 ```
 
 ## 11. Differential analysis
-
-```{r}
+```{r, warning=FALSE}
 library(DEP)
 library(dplyr)
 library(tidyr)
@@ -356,21 +355,28 @@ for (prot_name in protein_sets) {
   protein_se <- qf[[prot_name]]
   
   # -------------------------
-  # Build colData from existing metadata
+  # Build colData
   # -------------------------
   
   col_df <- as.data.frame(colData(protein_se))
   col_df$label     <- rownames(col_df)
-  col_df$condition <- col_df$treatment      # assuming treatment column exists
-  col_df$replicate <- col_df$`repeat`        # assuming repeat column exists
+  col_df$condition <- col_df$treatment
+  col_df$replicate <- col_df$`repeat`
   
   # -------------------------
-  # Build rowData
+  # Build rowData (KEEP GeneNames)
   # -------------------------
   
   row_df <- as.data.frame(rowData(protein_se))
-  row_df$name <- row_df$Proteins
-  row_df$ID   <- paste0(row_df$Proteins, "_", seq_len(nrow(row_df)))
+  
+  # Make sure GeneNames column exists
+  if (!"GeneNames" %in% colnames(row_df)) {
+    stop("GeneNames column not found in rowData(protein_se)")
+  }
+  
+  row_df$name  <- row_df$Proteins
+  row_df$ID    <- paste0(row_df$Proteins, "_", seq_len(nrow(row_df)))
+  row_df$gene  <- row_df$GeneNames   # 👈 IMPORTANT ADDITION
   
   assay_mat <- assay(protein_se)
   row_df <- cbind(row_df, assay_mat)
@@ -386,28 +392,35 @@ for (prot_name in protein_sets) {
   # Impute
   dep <- impute(dep, fun = "MinProb", q = 0.01)
   
-  # Filter out 'Pool' if present
+  # Remove Pool
   dep <- dep[, dep$condition != "Pool"]
-
-  # Define your control
-  control_cond <- "C"
-
-  # Run DEP comparison of all others vs control
+  
+  # Control
   dep <- test_diff(
-  dep,
-  type    = "control",
-  control = control_cond
-)
+    dep,
+    type    = "control",
+    control = "C"
+  )
   
-  dep <- add_rejections(dep,
-                        alpha = 0.05,
-                        lfc   = 1)
+  dep <- add_rejections(
+    dep,
+    alpha = 0.05,
+    lfc   = 1
+  )
   
-  # Store results
-  dep_results[[prot_name]] <- get_results(dep)
+  # Store results (NOW includes gene column)
+  res <- get_results(dep)
+
+# Extract gene names from DEP object
+gene_df <- as.data.frame(rowData(dep))[, c("name", "gene")]
+
+# Merge gene names back into results
+res <- left_join(res, gene_df, by = "name")
+
+dep_results[[prot_name]] <- res
 }
 ```
-
+## 12. Upset plot
 ```{r, warning=FALSE}
 library(ComplexUpset)
 library(ggplot2)
@@ -453,6 +466,275 @@ make_upset <- function(res, prefix) {
 # Run for each kit
 for (nm in names(dep_results)) {
   make_upset(dep_results[[nm]], nm)
+}
+```
+## 13. Volcano plot
+```{r}
+# library(dplyr)
+# library(tidyr)
+# library(ggplot2)
+# library(viridis)
+# library(ggrepel)
+
+make_volcano <- function(res, prefix) {
+  
+  pval_thresh <- 0.05
+  lfc_thresh  <- 1
+  
+  # Kit name mapping
+  kit_labels <- c(
+    "Kit4_2_norm_protein" = "Intact_short_term",
+    "Kit4_3_norm_protein" = "Intact_long_term",
+    "Kit4_4_norm_protein" = "Extract_short_term",
+    "Kit4_5_norm_protein" = "Expression_long_term"
+  )
+  
+  plot_name <- kit_labels[prefix]
+  if (is.na(plot_name)) plot_name <- prefix
+  
+  # Prepare long format
+  long_df <- res %>%
+    select(name, gene,
+           A_vs_C_ratio, A_vs_C_p.val,
+           V_vs_C_ratio, V_vs_C_p.val,
+           VA_vs_C_ratio, VA_vs_C_p.val) %>%
+    pivot_longer(
+      cols = -c(name, gene),
+      names_to = c("Treatment", ".value"),
+      names_pattern = "(.*)_vs_C_(.*)"
+    ) %>%
+    rename(log2FC = ratio,
+           pval   = p.val) %>%
+    mutate(
+      Treatment = recode(Treatment,
+                         "A"  = "Azacytidine",
+                         "V"  = "Venetoclax",
+                         "VA" = "Azacytidine + Venetoclax"),
+      negLogP = -log10(pval),
+      Significant = (pval < pval_thresh & abs(log2FC) > lfc_thresh),
+      gene = ifelse(is.na(gene) | gene == "", name, gene),
+      gene = sub(";.*", "", gene)
+    )
+  
+  # Determine shared vs unique (ONLY among significant proteins)
+  shared_info <- long_df %>%
+    filter(Significant) %>%
+    group_by(name) %>%
+    summarise(n_sig = n(), .groups = "drop")
+  
+  long_df <- long_df %>%
+    left_join(shared_info, by = "name") %>%
+    mutate(
+      Category = case_when(
+        Significant & n_sig > 1  ~ "Shared significant protein",
+        Significant & n_sig == 1 ~ "Unique significant protein",
+        TRUE ~ "Not significant"
+      )
+    )
+  
+  # 🔥 Select top 5 significant proteins per treatment (smallest p-value)
+  label_df <- long_df %>%
+    filter(Significant) %>%
+    group_by(Treatment) %>%
+    arrange(pval, .by_group = TRUE) %>%
+    slice_head(n = 5) %>%
+    ungroup()
+  
+  p <- ggplot(long_df, aes(x = log2FC, y = negLogP)) +
+    geom_point(aes(color = Treatment,
+                   fill  = Category,
+                   alpha = Significant),
+               shape = 21,
+               size = 1.2,
+               #alpha = 0.8,
+               stroke = 1
+               ) +
+  
+    scale_alpha_manual(values = c(
+      "TRUE"  = 1,
+      "FALSE" = 0.15
+    ), guide = "none")+
+    
+    geom_text_repel(
+                data = label_df,
+                aes(label = gene, color = Treatment),
+                size = 3,
+                box.padding = 0.3,
+                max.overlaps = 20,   # max number of labels allowed
+                force = 1,           # repel strength
+                segment.size = 0.3,
+                segment.alpha = 0.5
+    ) +
+    
+    geom_vline(xintercept = c(-lfc_thresh, lfc_thresh),
+               linetype = "dashed") +
+    geom_hline(yintercept = -log10(pval_thresh),
+               linetype = "dashed") +
+    
+    scale_color_viridis_d(option = "D", end = 0.9) +
+    
+    scale_fill_manual(values = c(
+      "Shared significant protein" = "black",
+      "Unique significant protein" = "gray60",
+      "Not significant" = "white"
+    )) +
+    
+    theme_minimal(base_size = 13) +
+    labs(
+      title = paste("Volcano Plot -", plot_name),
+      x = "log2 Fold Change",
+      y = "-log10(p-value)"
+    ) +
+    theme(
+      plot.title = element_text(face = "bold"),
+      legend.position = "bottom"
+    )
+  
+  return(p)
+}
+```
+
+
+
+```{r}
+# for (nm in names(dep_results)) {
+#   make_volcano(dep_results[[nm]], nm)
+# }
+
+```
+
+```{r}
+#library(patchwork)
+
+# ---- 1. Define consistent axis limits ----
+all_long <- lapply(names(dep_results), function(nm) {
+  res <- dep_results[[nm]]
+  
+  res %>%
+    select(A_vs_C_ratio, A_vs_C_p.val,
+           V_vs_C_ratio, V_vs_C_p.val,
+           VA_vs_C_ratio, VA_vs_C_p.val) %>%
+    pivot_longer(everything(),
+                 names_to = c("Treatment", ".value"),
+                 names_pattern = "(.*)_vs_C_(.*)") %>%
+    rename(log2FC = ratio,
+           pval   = p.val) %>%
+    mutate(negLogP = -log10(pval))
+})
+
+all_long <- bind_rows(all_long)
+
+x_limits <- range(all_long$log2FC, na.rm = TRUE)
+y_limits <- range(all_long$negLogP, na.rm = TRUE)
+
+# ---- 2. Custom panel titles ----
+custom_titles <- c(
+  "Kit4_2_norm_protein" = "Living cell short-term",
+  "Kit4_3_norm_protein" = "Living cell long-term",
+  "Kit4_4_norm_protein" = "Cell lysate short-term",
+  "Kit4_5_norm_protein" = "Expression long-term"
+)
+
+# ---- 3. Create plots with modifications ----
+plots <- lapply(names(dep_results), function(nm) {
+  
+  p <- make_volcano(dep_results[[nm]], nm) +
+  coord_cartesian(xlim = c(-4, 4), ylim = y_limits) +
+  labs(title = custom_titles[nm]) +
+  theme(
+    panel.border = element_rect(
+      colour = "black",
+      fill = NA,
+      linewidth = 0.6
+    )
+  )
+  
+  return(p)
+})
+
+# ---- 4. Remove redundant axis titles ----
+# Layout:
+# [1] [2]
+# [3] [4]
+
+p1 <- plots[[3]] + theme(axis.title.x = element_blank())
+p2 <- plots[[4]] + theme(axis.title.x = element_blank(),
+                         axis.title.y = element_blank())
+p3 <- plots[[1]] 
+p4 <- plots[[2]] + theme(axis.title.y = element_blank())
+
+# ---- 5. Combine with shared legend ----
+combined_plot <- (p1 + p2) /
+                 (p3 + p4) +
+  plot_layout(guides = "collect") &
+  theme(
+  plot.title = element_text(face = "bold"),
+  legend.position = "bottom",
+  legend.text = element_text(size = 8),      # smaller text for items
+  legend.title = element_text(size = 9),     # slightly smaller title
+  legend.key.size = unit(0.6, "lines")       # smaller key boxes
+)
+
+combined_plot
+ggsave("Volcano_4panel_combined.png",
+       combined_plot,
+       width = 23.5,
+        height = 14.85,
+        units = "cm",
+        dpi = 300)
+```
+
+
+## 14. Gene of interest
+```{r}
+library(dplyr)
+
+# Create a summary of BCL2 across all kits
+bcl2_summary <- lapply(names(dep_results), function(nm) {
+  res <- dep_results[[nm]]
+  
+  # Make sure gene column exists
+  gene_col <- if ("gene" %in% colnames(res)) "gene" else "name"
+  
+  res %>%
+    filter(grepl("^map7$", !!sym(gene_col), ignore.case = TRUE)) %>%
+    mutate(Kit = nm)
+}) %>% bind_rows()
+
+# View summary
+bcl2_summary
+
+
+# UniProt ID to check
+uniprot_id <- "P10415"
+
+# Search across all dep_results
+uniprot_summary <- lapply(names(dep_results), function(nm) {
+  res <- dep_results[[nm]]
+  
+  res %>%
+    filter(grepl(uniprot_id, name, ignore.case = TRUE)) %>%
+    mutate(Kit = nm)
+}) %>% bind_rows()
+
+# View result
+uniprot_summary
+
+uniprot_id <- "Q24K09"
+
+# Loop through all protein-level assays
+for (nm in grep("_norm_protein$", names(qf), value = TRUE)) {
+  protein_se <- qf[[nm]]
+  
+  found <- rowData(protein_se)$Proteins %>% 
+           grepl(uniprot_id, ., ignore.case = TRUE)
+  
+  cat("Kit:", nm, "- P10415 present?", any(found), "\n")
+  
+  if (any(found)) {
+    # Show the rows with this UniProt ID
+    print(as.data.frame(rowData(protein_se)[found, ]))
+  }
 }
 ```
 
