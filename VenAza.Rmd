@@ -738,3 +738,272 @@ for (nm in grep("_norm_protein$", names(qf), value = TRUE)) {
 }
 ```
 
+## 15. FC2FC common protein for VA
+```{r}
+kit_order <- c(
+  "Kit4_2_norm_protein",  # Living cell short-term
+  "Kit4_3_norm_protein",  # Living cell long-term
+  "Kit4_4_norm_protein",  # Cell lysate short-term
+  "Kit4_5_norm_protein"   # Expression long-term
+)
+```
+
+
+```{r}
+library(dplyr)
+
+# Collect all VA log2FC values across all kits
+all_fc <- lapply(kit_order, function(nm) {
+  dep_results[[nm]]$VA_vs_C_ratio
+}) %>% unlist()
+
+lim <- max(abs(all_fc), na.rm = TRUE)
+axis_limits <- c(-4, 4)
+```
+
+```{r}
+# library(dplyr)
+# library(ggplot2)
+# library(viridis)
+
+make_fc2fc_pair <- function(res1, res2, name1, name2,
+                            expression_res = NULL) {
+  
+  df1 <- res1 %>%
+    select(name,
+           VA_vs_C_ratio,
+           VA_vs_C_p.val) %>%
+    rename(log2FC_1 = VA_vs_C_ratio,
+           pval_1   = VA_vs_C_p.val)
+  
+  df2 <- res2 %>%
+    select(name,
+           VA_vs_C_ratio,
+           VA_vs_C_p.val) %>%
+    rename(log2FC_2 = VA_vs_C_ratio,
+           pval_2   = VA_vs_C_p.val)
+  
+  merged <- inner_join(df1, df2, by = "name") %>%
+    mutate(
+      mean_negLogP = -log10((pval_1 + pval_2) / 2)
+    )
+  
+  # Regression
+  fit <- lm(log2FC_2 ~ log2FC_1, data = merged)
+  slope <- coef(fit)[2]
+  r2    <- summary(fit)$r.squared
+  pval_reg <- summary(fit)$coefficients[2,4]
+  
+  label_text <- paste0(
+    "Slope = ", round(slope, 3),
+    "\nR² = ", round(r2, 3),
+    "\nP = ", signif(pval_reg, 3)
+  )
+  
+  p <- ggplot(merged, aes(log2FC_1, log2FC_2)) +
+    
+    geom_point(aes(fill = mean_negLogP),
+               shape = 21,
+               size = 1.6,
+               alpha = 0.6,
+               color = "gray40",  
+               stroke = 0.6) +
+    
+    geom_smooth(method = "lm",
+                se = FALSE,
+                color = "red",   
+                linewidth = 1.2) +
+    
+    annotate("text",
+             x = axis_limits[1] * 0.9,
+             y = axis_limits[2] * 0.9,
+             label = label_text,
+             hjust = 0,
+             vjust = 1,
+             size = 3,
+             color = "blue") +
+    
+    scale_fill_viridis_c(
+      option = "D",
+      direction = -1,
+      name = "-log10(p-value)"
+    ) +
+    
+    coord_fixed(
+      xlim = axis_limits,
+      ylim = axis_limits,
+      ratio = 1
+    ) +
+    
+    theme_minimal(base_size = 11) +
+    
+    labs(
+      title = paste(custom_titles[name1], "vs", custom_titles[name2]),
+      x = paste0("log2FC (", custom_titles[name1], ")"),
+      y = paste0("log2FC (", custom_titles[name2], ")")
+    ) +
+    
+    theme(
+      plot.title = element_text(face = "bold", size = 7),
+      legend.position = "bottom",
+      legend.text = element_text(size = 5),
+      legend.title = element_text(size = 6),
+      axis.title = element_text(size = 6)
+    )
+  
+  return(p)
+}
+```
+
+
+
+
+```{r}
+p4 <- make_fc2fc_pair(dep_results[[kit_order[1]]],
+                      dep_results[[kit_order[4]]],
+                      kit_order[1], kit_order[4])
+
+p5 <- make_fc2fc_pair(dep_results[[kit_order[3]]],
+                      dep_results[[kit_order[4]]],
+                      kit_order[3], kit_order[4])
+
+p6 <- make_fc2fc_pair(dep_results[[kit_order[2]]],
+                      dep_results[[kit_order[4]]],
+                      kit_order[2], kit_order[4])
+
+triple_plot_2 <- (p4 | p5 | p6) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+
+triple_plot_2
+
+ggsave("FC2FC2Expression.png",
+       triple_plot_2,
+       width = 21,
+        height = 10,
+        units = "cm",
+        dpi = 300)
+
+```
+
+
+```{r}
+# library(ggplot2)
+# library(dplyr)
+# library(viridis)
+# library(RColorBrewer)
+
+make_fc2fc_pair1 <- function(res1, res2, res3, name1, name2, name3, axis_limits = c(-3, 3)) {
+  
+  # Merge the VA log2FC
+  df1 <- res1 %>%
+    select(name, VA_vs_C_ratio, gene) %>%
+    rename(log2FC_1 = VA_vs_C_ratio)
+  
+  df2 <- res2 %>%
+    select(name, VA_vs_C_ratio, gene) %>%
+    rename(log2FC_2 = VA_vs_C_ratio)
+  
+  df3 <- res3 %>%
+    select(name, VA_vs_C_ratio, gene) %>%
+    rename(log2FC_3 = VA_vs_C_ratio)
+  
+  # Merge all three by 'name'
+  merged <- df1 %>%
+    full_join(df2, by = "name") %>%
+    full_join(df3, by = "name")
+  
+  # Before labeling, create a gene column
+merged <- merged %>%
+  separate(gene, into = "gene", sep = ";", extra = "drop", fill = "right")
+# Subset for labeling genes with large FC
+label_df <<- merged %>%
+  filter(abs(log2FC_1) > 1.5 | abs(log2FC_2) > 1.5)
+  
+  # Plot
+  p <- ggplot(merged, aes(x = log2FC_1, y = log2FC_2)) +
+    geom_point(aes(fill = log2FC_3),
+               shape = 21, size = 1.5, alpha = 0.8, stroke = 0.5, color = "gray80") +
+    
+    # Add gene labels for large FC points
+    ggrepel::geom_text_repel(
+                    data = label_df,
+                    aes(label = gene),   # use gene name instead of UniProt ID
+                    size = 2,
+                    box.padding = 0.3,
+                    max.overlaps = 20,   # max number of labels allowed
+                    force = 1, 
+                    segment.color = "gray50"
+                  ) +
+    
+    # Diverging color scale for FC of third kit
+    scale_fill_gradient2(
+      low = "blue",
+      mid = "white",
+      high = "red",
+      midpoint = 0,
+      limits = c(-0.3, 0.3),
+      name = paste0("log2FC (", name3, ")"),
+      oob = scales::squish
+    ) +
+    
+    coord_fixed(xlim = axis_limits, ylim = axis_limits) +
+    theme_minimal(base_size = 11) +
+    labs(
+      title = paste(name1, "vs", name2),
+      x = paste0("log2FC (", name1, ")"),
+      y = paste0("log2FC (", name2, ")")
+    ) +
+    theme(
+      plot.title = element_text(face = "bold", size = 7),
+      legend.position = "bottom",
+      legend.text = element_text(size = 5),
+      legend.title = element_text(size = 6),
+      axis.title = element_text(size = 6)
+    ) +
+    guides(
+      fill = guide_colorbar(barwidth = 3)
+    )
+  
+  return(p)
+}
+
+```
+
+```{r}
+# First three plots (FC color)
+p1 <- make_fc2fc_pair1(
+  dep_results[["Kit4_3_norm_protein"]],
+  dep_results[["Kit4_2_norm_protein"]],
+  dep_results[["Kit4_5_norm_protein"]],
+  "Living cell long-term",
+  "Living cell short-term",
+  "Expression long-term"
+)
+
+
+p2 <- make_fc2fc_pair1(
+  dep_results[["Kit4_3_norm_protein"]],
+  dep_results[["Kit4_4_norm_protein"]],
+  dep_results[["Kit4_5_norm_protein"]],
+  "Living cell long-term",
+  "Cell lysate short-term",
+  "Expression long-term"
+)
+
+
+triple_plot_1 <- (p1 | p3) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+
+triple_plot_1
+
+ggsave("FC2FCLongtoShort.png",
+       triple_plot_1,
+       width = 15,
+        height = 10,
+        units = "cm",
+        dpi = 300)
+
+```
+
