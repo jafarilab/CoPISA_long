@@ -339,81 +339,155 @@ qfInfo <- tibble(
 
 ## 11. Differential analysis
 
-```{r}
-library(ComplexUpset)
-library(ggplot2)
+```{r, eval=FALSE, echo =FALSE, message=FALSE, warning=FALSE}
+library(DEP)
 library(dplyr)
-library(ggpubr)  # for ggarrange if needed
+library(tidyr)
+library(S4Vectors)
 
-# Kit titles
-kit_titles <- c(
-  "Kit4_2_norm_protein" = "Short-term living cell CoPISA",
-  "Kit4_3_norm_protein" = "Long-term living cell CoPISA",
-  "Kit4_4_norm_protein" = "Short-term Cell lysate CoPISA",
-  "Kit4_5_norm_protein" = "Long-term expression proteomics"
-)
+protein_sets <- grep("_norm_protein$", names(qf), value = TRUE)
 
-# Google Material Design colors
-treatment_colors <- c(
-  A  = "#EA4335",  # Red
-  V  = "#4285F4",  # Blue
-  VA = "#34A853"   # Green
-)
+dep_results <- list()
 
-make_upset <- function(res, prefix) {
-
-  sig_df <- res %>%
-    select(name, A_vs_C_significant, V_vs_C_significant, VA_vs_C_significant) %>%
-    rename(
-      A  = A_vs_C_significant,
-      V  = V_vs_C_significant,
-      VA = VA_vs_C_significant
-    ) %>%
-    filter(A | V | VA)  # keep only proteins significant in at least one treatment
-
-  if(nrow(sig_df) == 0){
-    message("No significant proteins to plot for ", prefix)
-    return(NULL)
+for (prot_name in protein_sets) {
+  
+  message("Running DEP for: ", prot_name)
+  
+  protein_se <- qf[[prot_name]]
+  
+  # -------------------------
+  # Build colData
+  # -------------------------
+  
+  col_df <- as.data.frame(colData(protein_se))
+  col_df$label     <- rownames(col_df)
+  col_df$condition <- col_df$treatment
+  col_df$replicate <- col_df$`repeat`
+  
+  # -------------------------
+  # Build rowData (KEEP GeneNames)
+  # -------------------------
+  
+  row_df <- as.data.frame(rowData(protein_se))
+  
+  # Make sure GeneNames column exists
+  if (!"GeneNames" %in% colnames(row_df)) {
+    stop("GeneNames column not found in rowData(protein_se)")
   }
-
-  # Convert treatment columns to factors for consistent coloring
-  sig_df <- sig_df %>%
-    mutate(across(c(A,V,VA), as.logical))
-
-  # Create upset plot
-  p <- upset(
-    sig_df,
-    intersect = c("A","V","VA"),
-    annotations = list(
-      'Significant proteins' = ggplot(mapping=aes(fill=intersection)) +
-        geom_bar() +
-        scale_fill_manual(values=treatment_colors)
-    ),
-    width_ratio=0.2,
-    base_annotations = list(
-      'Intersection size'=intersection_size(
-        counts=TRUE,
-        mapping=aes(fill=intersection)
-      )
-    ),
-    themes=upset_default_themes(text=element_text(size=12))
+  
+  row_df$name  <- row_df$Proteins
+  row_df$ID    <- paste0(row_df$Proteins, "_", seq_len(nrow(row_df)))
+  row_df$gene  <- row_df$GeneNames   # 👈 IMPORTANT ADDITION
+  
+  assay_mat <- assay(protein_se)
+  row_df <- cbind(row_df, assay_mat)
+  
+  columns <- (ncol(row_df) - ncol(assay_mat) + 1):ncol(row_df)
+  
+  # -------------------------
+  # Make DEP object
+  # -------------------------
+  
+  dep <- make_se(row_df, columns, col_df)
+  
+  # Impute
+  dep <- impute(dep, fun = "MinProb", q = 0.01)
+  
+  # Remove Pool
+  dep <- dep[, dep$condition != "Pool"]
+  
+  # Control
+  dep <- test_diff(
+    dep,
+    type    = "control",
+    control = "C"
   )
+  
+  dep <- add_rejections(
+    dep,
+    alpha = 0.05,
+    lfc   = 0
+  )
+  
+  # Store results (NOW includes gene column)
+  res <- get_results(dep)
 
-  # Add title
-  p <- p + ggtitle(kit_titles[[prefix]]) + theme(plot.title=element_text(hjust=0.5, size=16))
+# Extract gene names from DEP object
+gene_df <- as.data.frame(rowData(dep))[, c("name", "gene")]
 
-  # Display in R
-  print(p)
+# Merge gene names back into results
+res <- left_join(res, gene_df, by = "name")
 
-  # Save PNG
-  ggsave(paste0("upset_", prefix, ".png"), p, width=10, height=6)
-}
-
-# Run for each kit
-for (nm in names(dep_results)) {
-  make_upset(dep_results[[nm]], nm)
+dep_results[[prot_name]] <- res
 }
 ```
+```{r}
+## Checking different thresholds
+alpha_vals <- c(0.01, 0.05, 0.1)
+lfc_vals   <- c(0, 0.5, 1)
+
+sig_summary <- list()
+
+for (prot_name in protein_sets) {
+
+  message("Running DEP for: ", prot_name)
+  
+  protein_se <- qf[[prot_name]]
+  
+  col_df <- as.data.frame(colData(protein_se))
+  col_df$label     <- rownames(col_df)
+  col_df$condition <- col_df$treatment
+  col_df$replicate <- col_df$`repeat`
+  
+  row_df <- as.data.frame(rowData(protein_se))
+  row_df$name  <- row_df$Proteins
+  row_df$ID    <- paste0(row_df$Proteins, "_", seq_len(nrow(row_df)))
+  row_df$gene  <- row_df$GeneNames
+  
+  assay_mat <- assay(protein_se)
+  row_df <- cbind(row_df, assay_mat)
+  columns <- (ncol(row_df) - ncol(assay_mat) + 1):ncol(row_df)
+  
+  dep <- make_se(row_df, columns, col_df)
+  dep <- impute(dep, fun="MinProb", q=0.01)
+  dep <- dep[, dep$condition != "Pool"]
+  
+  dep <- test_diff(dep, type="control", control="C")
+  
+  # Test multiple alpha / lfc combinations
+  for(a in alpha_vals){
+    for(l in lfc_vals){
+      
+      dep_tmp <- add_rejections(dep, alpha=a, lfc=l)
+      
+      res <- get_results(dep_tmp)
+      
+      n_sig <- sum(res$significant, na.rm=TRUE)
+      
+      sig_summary[[length(sig_summary)+1]] <- data.frame(
+        dataset = prot_name,
+        alpha   = a,
+        lfc     = l,
+        significant_proteins = n_sig
+      )
+    }
+  }
+}
+
+sig_summary <- bind_rows(sig_summary)
+sig_summary
+ggplot(sig_summary, aes(x=lfc, y=significant_proteins, color=factor(alpha))) +
+  geom_line() +
+  geom_point(size=3) +
+  facet_wrap(~dataset) +
+  labs(
+    color="alpha",
+    x="log2FC threshold",
+    y="Number of significant proteins"
+  ) +
+  theme_bw()
+```
+
 
 ## 12. Upset plot
 
@@ -422,16 +496,9 @@ for (nm in names(dep_results)) {
 library(dplyr)
 library(UpSetR)
 
-# Kit titles
-kit_titles <- c(
-  "Kit4_2_norm_protein" = "Short-term living cell CoPISA",
-  "Kit4_3_norm_protein" = "Long-term living cell CoPISA",
-  "Kit4_4_norm_protein" = "Short-term Cell lysate CoPISA",
-  "Kit4_5_norm_protein" = "Long-term expression proteomics"
-)
 
 # Google colors for sets
-treatment_colors <- c("A"="#EA4335","V"="#4285F4","VA"="#34A853")
+treatment_colors <- c("A"="#EA4335","V"="#4285F4","VA"="#FBBC05")
 
 make_upset <- function(res, prefix) {
   # Build integer matrix
@@ -461,7 +528,7 @@ make_upset <- function(res, prefix) {
     nsets = 3,
     nintersects = NA,
     order.by = "freq",
-    main.bar.color = "steelblue",
+    main.bar.color = "darkorchid4",
     sets.bar.color = treatment_colors,
     mb.ratio = c(0.6,0.4),
     text.scale = c(1.5, 1.5, 1, 1, 1.5, 1.2),
@@ -469,19 +536,25 @@ make_upset <- function(res, prefix) {
     sets.x.label = "Proteins per treatment",
     keep.order = TRUE
   )
-  #title(kit_title, line=2, cex.main=1.8)
-  
+ # title(main = kit_title, line = 1)
   
 }
 
-# Run for all kits
-for(nm in names(dep_results)) {
-  make_upset(dep_results[[nm]], nm)
-}
-# Run for all kits
-for(nm in names(dep_results)) {
-  make_upset(dep_results[[nm]], nm)
-}
+
+kit_titles <- c(
+  "Kit4_2_norm_protein" = "Short-term living cell CoPISA",
+  "Kit4_3_norm_protein" = "Long-term living cell CoPISA",
+  "Kit4_4_norm_protein" = "Short-term Cell lysate CoPISA",
+  "Kit4_5_norm_protein" = "Long-term expression proteomics"
+)
+
+
+make_upset(dep_results[[1]], "Kit4_2_norm_protein")
+make_upset(dep_results[[2]], "Kit4_3_norm_protein")
+make_upset(dep_results[[3]], "Kit4_4_norm_protein")
+make_upset(dep_results[[4]], "Kit4_5_norm_protein")
+
+
 ```
 
 
