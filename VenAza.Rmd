@@ -498,63 +498,93 @@ library(UpSetR)
 
 
 # Google colors for sets
-treatment_colors <- c("A"="#EA4335","V"="#4285F4","VA"="#FBBC05")
+treatment_colors <- c("A"="#EA4335","V"="#4285F4","VA"="darkorchid4")
 
 make_upset <- function(res, prefix) {
-  # Build integer matrix
+
   upset_df <- res %>%
-    select(name, A_vs_C_significant, V_vs_C_significant, VA_vs_C_significant) %>%
-    mutate(
+    dplyr::select(name, A_vs_C_significant, V_vs_C_significant, VA_vs_C_significant) %>%
+    dplyr::mutate(
       A = as.integer(A_vs_C_significant),
       V = as.integer(V_vs_C_significant),
       VA = as.integer(VA_vs_C_significant)
     ) %>%
-    select(name, A, V, VA)
-  
-  # Remove rows with all zeros
+    dplyr::select(name, A, V, VA)
+
   upset_df <- upset_df[rowSums(upset_df[, -1]) > 0, ]
+
   if(nrow(upset_df) == 0) {
     message("No significant proteins to plot for ", prefix)
     return(NULL)
   }
-  
-  # Get title safely
-  kit_title <- kit_titles[[as.character(prefix)]]
-  if(is.null(kit_title)) kit_title <- prefix
-  
-  # Draw the plot
+
+  set_order <- c("V","A","VA")
+
   UpSetR::upset(
     upset_df,
+     # Set structure
+    sets = set_order,
     nsets = 3,
     nintersects = NA,
     order.by = "freq",
-    main.bar.color = "darkorchid4",
-    sets.bar.color = treatment_colors,
-    mb.ratio = c(0.6,0.4),
-    text.scale = c(1.5, 1.5, 1, 1, 1.5, 1.2),
+    decreasing = TRUE,
+    
+    main.bar.color = "#D2691E",
+    sets.bar.color = treatment_colors[set_order],  # match order
+    # Matrix appearance
+    matrix.color = "#8B3E2F",
+    point.size = 4,
+    line.size = 1.2,
+    mb.ratio = c(0.65, 0.35),
+    # Text scaling
+    text.scale = c(1.4, 1.6, 1, 1.2, 1.6, 1.4),
+    # Intersection numbers
+    show.numbers = "yes",
+    number.angles = 30,
+    # Background shading
+    shade.color = "#1E90FF",
+    shade.alpha = 0.2,
     mainbar.y.label = "Number of proteins",
     sets.x.label = "Proteins per treatment",
     keep.order = TRUE
   )
- # title(main = kit_title, line = 1)
-  
 }
+    
+# kit_titles <- c(
+#   "Kit4_2_norm_protein" = "Short-term living cell CoPISA",
+#   "Kit4_3_norm_protein" = "Long-term living cell CoPISA",
+#   "Kit4_4_norm_protein" = "Short-term Cell lysate CoPISA",
+#   "Kit4_5_norm_protein" = "Long-term expression proteomics"
+# )
 
 
-kit_titles <- c(
-  "Kit4_2_norm_protein" = "Short-term living cell CoPISA",
-  "Kit4_3_norm_protein" = "Long-term living cell CoPISA",
-  "Kit4_4_norm_protein" = "Short-term Cell lysate CoPISA",
-  "Kit4_5_norm_protein" = "Long-term expression proteomics"
-)
+up1 <- make_upset(dep_results[[1]], "Kit4_2_norm_protein")
+up2 <- make_upset(dep_results[[2]], "Kit4_3_norm_protein")
+up3 <- make_upset(dep_results[[3]], "Kit4_4_norm_protein")
+up4 <- make_upset(dep_results[[4]], "Kit4_5_norm_protein")
+up2
+up3
+up1
+up4
 
 
-make_upset(dep_results[[1]], "Kit4_2_norm_protein")
-make_upset(dep_results[[2]], "Kit4_3_norm_protein")
-make_upset(dep_results[[3]], "Kit4_4_norm_protein")
-make_upset(dep_results[[4]], "Kit4_5_norm_protein")
+# Save up1 as PNG
+png("up1.png", width = 10, height = 10, units = "cm", res = 300)
+print(up1)  # must use print() for ComplexUpset
+dev.off()
 
+# Repeat for other plots
+png("up2.png", width = 10, height = 10, units = "cm", res = 300)
+print(up2)
+dev.off()
 
+png("up3.png", width = 10, height = 10, units = "cm", res = 300)
+print(up3)
+dev.off()
+
+png("up4.png", width = 10, height = 10, units = "cm", res = 300)
+print(up4)
+dev.off()
 ```
 
 
