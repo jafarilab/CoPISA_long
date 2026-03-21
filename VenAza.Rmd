@@ -489,16 +489,18 @@ ggplot(sig_summary, aes(x=lfc, y=significant_proteins, color=factor(alpha))) +
 ```
 
 
-## 12. Upset plot
+## 12. Upset plot 1
 
 
 ```{r}
 library(dplyr)
 library(UpSetR)
+library(viridisLite)
 
+vcols <- viridis(6)
 
 # Google colors for sets
-treatment_colors <- c("A"="#EA4335","V"="#4285F4","VA"="darkorchid4")
+treatment_colors <- c("A"=vcols[2],"V"=vcols[4],"VA"=vcols[6])
 
 make_upset <- function(res, prefix) {
 
@@ -528,11 +530,10 @@ make_upset <- function(res, prefix) {
     nintersects = NA,
     order.by = "freq",
     decreasing = TRUE,
-    
-    main.bar.color = "#D2691E",
+    main.bar.color = vcols[5],
     sets.bar.color = treatment_colors[set_order],  # match order
     # Matrix appearance
-    matrix.color = "#8B3E2F",
+    matrix.color = vcols[3],
     point.size = 4,
     line.size = 1.2,
     mb.ratio = c(0.65, 0.35),
@@ -542,7 +543,7 @@ make_upset <- function(res, prefix) {
     show.numbers = "yes",
     number.angles = 30,
     # Background shading
-    shade.color = "#1E90FF",
+    shade.color = vcols[1],
     shade.alpha = 0.2,
     mainbar.y.label = "Number of proteins",
     sets.x.label = "Proteins per treatment",
@@ -588,12 +589,90 @@ dev.off()
 ```
 
 
+## 13. Upset plot 2
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(UpSetR)
+library(viridis)
+library(purrr)  # for reduce()
+
+# ---- 1. Prepare combined VA significant dataframe ----
+upset_combined <- lapply(names(dep_results), function(nm) {
+  res <- dep_results[[nm]]
+  
+  res %>%
+    select(name, VA_vs_C_significant) %>%
+    mutate(!!nm := as.integer(VA_vs_C_significant)) %>%
+    select(-VA_vs_C_significant)
+}) %>%
+  reduce(full_join, by = "name")  # combine all 4 datasets by protein name
+
+# Replace NAs with 0 (not significant)
+upset_combined[is.na(upset_combined)] <- 0
+
+# ---- 2. Map kit names to descriptive titles ----
+kit_titles <- c(
+  "Kit4_2_norm_protein" = "Short-term living cell CoPISA",
+  "Kit4_3_norm_protein" = "Long-term living cell CoPISA",
+  "Kit4_4_norm_protein" = "Short-term Cell lysate CoPISA",
+  "Kit4_5_norm_protein" = "Long-term expression proteomics"
+)
+
+# Replace column names with descriptive names
+colnames(upset_combined) <- c("name", kit_titles[colnames(upset_combined)[-1]])
+
+# ---- 3. Define set order and colors ----
+set_order <- kit_titles  # use descriptive names
+
+vcols <- viridis(6)
+treatment_colors <- c(
+  "Short-term living cell CoPISA"    = vcols[2],
+  "Long-term living cell CoPISA"     = vcols[3],
+  "Short-term Cell lysate CoPISA"    = vcols[4],
+  "Long-term expression proteomics"  = vcols[5]
+)
+
+# ---- 4. Create UpSet plot ----
+png("up44.png", width = 12, height = 10, units = "cm", res = 300)
+
+UpSetR::upset(
+  upset_combined,
+  
+  sets = set_order,
+  nsets = length(set_order),
+  nintersects = NA,
+  order.by = "freq",
+  decreasing = TRUE,
+  
+  main.bar.color = vcols[6],                     # intersection bars
+  sets.bar.color = treatment_colors[set_order],  # treatment bars
+  matrix.color = vcols[3],                       # intersection points
+  point.size = 4,
+  line.size = 1.2,
+  mb.ratio = c(0.65, 0.35),
+  
+  text.scale = c(1.4, 1.6, 1, 1.2, 1.6, 1.4),
+  
+  show.numbers = "yes",
+  number.angles = 30,
+  
+  shade.color = vcols[1],
+  shade.alpha = 0.2,
+  
+  mainbar.y.label = "Number of proteins",
+  sets.x.label = "Proteins per VA treatment in all four samples",
+  keep.order = TRUE
+)
+
+dev.off()
+```
 
 
 
 
-
-## 13. Volcano plot
+## 14. Volcano plot
 ```{r}
 # library(dplyr)
 # library(tidyr)
@@ -633,8 +712,8 @@ make_volcano <- function(res, prefix) {
     mutate(
       Treatment = recode(Treatment,
                          "A"  = "Azacytidine",
-                         "V"  = "Venetoclax",
-                         "VA" = "Azacytidine + Venetoclax"),
+                         "VA" = "Azacytidine + Venetoclax",
+                         "V"  = "Venetoclax"),
       negLogP = -log10(pval),
       Significant = (pval < pval_thresh & abs(log2FC) > lfc_thresh),
       gene = ifelse(is.na(gene) | gene == "", name, gene),
@@ -665,28 +744,36 @@ make_volcano <- function(res, prefix) {
     slice_head(n = 5) %>%
     ungroup()
   
+  # 🔥 MODIFIED: define custom viridis colors
+  library(viridis)
+  vcols <- viridis(6)
+  treatment_colors <- c(
+    "Azacytidine"             = vcols[2],
+    "Venetoclax"              = vcols[4],
+    "Azacytidine + Venetoclax"= vcols[6]
+  )
+  
   p <- ggplot(long_df, aes(x = log2FC, y = negLogP)) +
     geom_point(aes(color = Treatment,
                    fill  = Category,
                    alpha = Significant),
                shape = 21,
                size = 1.2,
-               #alpha = 0.8,
                stroke = 1
                ) +
   
     scale_alpha_manual(values = c(
       "TRUE"  = 1,
       "FALSE" = 0.15
-    ), guide = "none")+
+    ), guide = "none") +
     
     geom_text_repel(
                 data = label_df,
                 aes(label = gene, color = Treatment),
                 size = 3,
                 box.padding = 0.3,
-                max.overlaps = 20,   # max number of labels allowed
-                force = 1,           # repel strength
+                max.overlaps = 20,
+                force = 1,
                 segment.size = 0.3,
                 segment.alpha = 0.5
     ) +
@@ -696,7 +783,8 @@ make_volcano <- function(res, prefix) {
     geom_hline(yintercept = -log10(pval_thresh),
                linetype = "dashed") +
     
-    scale_color_viridis_d(option = "D", end = 0.9) +
+    # 🔥 MODIFIED: use manual color assignment instead of viridis_d()
+    scale_color_manual(values = treatment_colors) +
     
     scale_fill_manual(values = c(
       "Shared significant protein" = "black",
@@ -717,6 +805,8 @@ make_volcano <- function(res, prefix) {
   
   return(p)
 }
+
+
 ```
 
 
@@ -742,7 +832,7 @@ all_long <- lapply(names(dep_results), function(nm) {
     pivot_longer(everything(),
                  names_to = c("Treatment", ".value"),
                  names_pattern = "(.*)_vs_C_(.*)") %>%
-    rename(log2FC = ratio,
+    dplyr::rename(log2FC = ratio,
            pval   = p.val) %>%
     mutate(negLogP = -log10(pval))
 })
@@ -810,7 +900,7 @@ ggsave("Volcano_4panel_combined.png",
 ```
 
 
-## 14. Gene of interest
+## 15. Gene of interest
 ```{r}
 library(dplyr)
 
@@ -863,7 +953,7 @@ for (nm in grep("_norm_protein$", names(qf), value = TRUE)) {
 }
 ```
 
-## 15. FC2FC common protein for VA
+## 16. FC2FC common protein for VA
 ```{r}
 kit_order <- c(
   "Kit4_2_norm_protein",  # Living cell short-term
