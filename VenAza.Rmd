@@ -1404,3 +1404,200 @@ ggsave("FC2FCLongtoShort.png",
 
 ```
 
+## 17. Merge Four Proteomics Analyses by Fisher's Method for Combining P-values
+
+```{r}
+# -----------------------------
+# 1. Prepare merged dataset
+# -----------------------------
+
+# Get common proteins across all datasets
+common_proteins <- Reduce(intersect, list(
+  dep_results$Kit4_2_norm_protein$gene,
+  dep_results$Kit4_3_norm_protein$gene,
+  dep_results$Kit4_4_norm_protein$gene,
+  dep_results$Kit4_5_norm_protein$gene
+))
+
+# Filter datasets for common proteins
+dep1 <- dep_results$Kit4_3_norm_protein %>% filter(gene %in% common_proteins) # "Long-term living cell CoPISA",
+dep2 <- dep_results$Kit4_2_norm_protein %>% filter(gene %in% common_proteins) # "Short-term living cell CoPISA"
+dep3 <- dep_results$Kit4_4_norm_protein %>% filter(gene %in% common_proteins) # "Short-term Cell lysate CoPISA"
+dep4 <- dep_results$Kit4_5_norm_protein %>% filter(gene %in% common_proteins) # "Long-term expression proteomics"
+
+deps <- list(dep1, dep2, dep3, dep4)
+
+# Merge datasets by gene name and suffix columns with dataset index
+merged <- imap(deps, function(df, i) {
+  df %>%
+    select(name = gene, ends_with("_p.val"), ends_with("_ratio")) %>%
+    rename_with(~ paste0(.x, ".", i), -name)  # i is from imap
+}) %>%
+  reduce(inner_join, by = "name")
+
+# -----------------------------
+# 2. Helper functions
+# -----------------------------
+
+# Fisher method for combining p-values
+combine_fisher <- function(...) {
+  pvals <- c(...)
+  pvals[is.na(pvals) | pvals == 0] <- 1
+  chisq <- -2 * sum(log(pvals))
+  df <- 2 * length(pvals)
+  pchisq(chisq, df = df, lower.tail = FALSE)
+}
+
+# Harmonic mean for absolute fold change (pairwise)
+hm2 <- function(x, y) {
+  2 / (1/abs(x) + 1/abs(y))
+}
+
+# -----------------------------
+# 3. Compute pairwise Fisher and HM fold changes
+# -----------------------------
+
+merged <- merged %>%
+  rowwise() %>%
+  mutate(
+    # ---- A vs C ----
+    Fisher_A_12 = combine_fisher(A_vs_C_p.val.1, A_vs_C_p.val.2),
+    Fisher_A_13 = combine_fisher(A_vs_C_p.val.1, A_vs_C_p.val.3),
+
+    hmAbsFC_A_12 = hm2(A_vs_C_ratio.1, A_vs_C_ratio.2),
+    hmAbsFC_A_13 = hm2(A_vs_C_ratio.1, A_vs_C_ratio.3),
+
+    # ---- V vs C ----
+    Fisher_V_12 = combine_fisher(V_vs_C_p.val.1, V_vs_C_p.val.2),
+    Fisher_V_13 = combine_fisher(V_vs_C_p.val.1, V_vs_C_p.val.3),
+
+    hmAbsFC_V_12 = hm2(V_vs_C_ratio.1, V_vs_C_ratio.2),
+    hmAbsFC_V_13 = hm2(V_vs_C_ratio.1, V_vs_C_ratio.3),
+
+    # ---- VA vs C ----
+    Fisher_VA_12 = combine_fisher(VA_vs_C_p.val.1, VA_vs_C_p.val.2),
+    Fisher_VA_13 = combine_fisher(VA_vs_C_p.val.1, VA_vs_C_p.val.3),
+
+    hmAbsFC_VA_12 = hm2(VA_vs_C_ratio.1, VA_vs_C_ratio.2),
+    hmAbsFC_VA_13 = hm2(VA_vs_C_ratio.1, VA_vs_C_ratio.3)
+  ) %>%
+  ungroup()
+
+# -----------------------------
+# 4. Geometric mean cutoff for |log2FC|
+# -----------------------------
+cutoffs_log2 <- c(0.3, 0.3)
+cutoffs_linear <- 2^cutoffs_log2
+gm_cutoff_linear <- exp(mean(log(cutoffs_linear)))
+gm_cutoff_log2 <- log2(gm_cutoff_linear)
+
+# -----------------------------
+# 5. Prepare data for plotting
+# -----------------------------
+plot_data <- merged %>%
+  mutate(
+    # Convert HM |log2FC| to linear
+    gmAbsFC_VA_12 = 2^hmAbsFC_VA_12,
+    gmAbsFC_VA_13 = 2^hmAbsFC_VA_13
+  ) %>%
+  rowwise() %>%
+  mutate(
+    # Geometric mean in linear space (just a safeguard)
+    gmAbsFC_VA_12 = exp(mean(log(c(gmAbsFC_VA_12)), na.rm = TRUE)),
+    gmAbsFC_VA_13 = exp(mean(log(c(gmAbsFC_VA_13)), na.rm = TRUE))
+  ) %>%
+  ungroup() %>%
+  mutate(
+    # Back to log2 for plotting
+    gmAbsFC_VA_12 = log2(gmAbsFC_VA_12),
+    gmAbsFC_VA_13 = log2(gmAbsFC_VA_13)
+  ) %>%
+  select(
+    name,
+    gmAbsFC_VA_12, Fisher_VA_12,
+    gmAbsFC_VA_13, Fisher_VA_13
+  ) %>%
+  pivot_longer(
+    cols = -name,
+    names_to = c(".value", "Condition"),
+    names_pattern = "(gmAbsFC|Fisher)_(VA_\\d+)"
+  ) %>%
+  mutate(
+    Condition = recode(Condition,
+      "VA_12" = "Long-term living cell CoPISA vs \nShort-term living cell CoPISA",
+      "VA_13" = "Long-term living cell CoPISA vs \nShort-term Cell lysate CoPISA"
+    ),
+    significant = ifelse(Fisher < 0.05 & gmAbsFC > gm_cutoff_log2,
+                         "Significant", "Not significant")
+  )
+
+# -----------------------------
+# 6. Volcano-style plot
+# -----------------------------
+library(ggplot2)
+library(ggrepel)
+# --- 1. Remove multiple gene names and keep the first one to show 
+plot_data <- plot_data %>%
+  mutate(name_plot = sub(";.*$", "", name))  # take everything before the first semicolon
+
+# --- 2. Add dep4 fold-change to plot_data ---
+dep4_fc <- dep_results$Kit4_5_norm_protein %>%
+  filter(gene %in% common_proteins) %>%
+  select(name = gene, FC_dep4 = VA_vs_C_ratio)  # or whichever comparison you want
+
+plot_data <- plot_data %>%
+  left_join(dep4_fc, by = c("name" = "name")) %>%
+  mutate(
+    # keep only first gene if multiple genes
+    name_plot = sub(";.*$", "", name)
+  )
+
+# Volcano-style plot with cutoff lines
+spray <- ggplot(plot_data, aes(x = gmAbsFC, y = -log10(Fisher))) +
+  geom_point(aes(
+    color = ifelse(abs(gmAbsFC) > gm_cutoff_log2 & Fisher < 0.05,
+                   dep_results$Kit4_5_norm_protein$A_vs_C_ratio[match(name, dep_results$Kit4_5_norm_protein$gene)],
+                   NA)
+  ), alpha = 0.8, size = 2) +
+  scale_color_gradient2(
+    low = "blue", mid = "gray90", high = "red",
+    midpoint = 0,
+    na.value = "gray70",
+    name = "dep4 log2FC"
+  ) +
+  geom_text_repel(
+    data = subset(plot_data, abs(gmAbsFC) > gm_cutoff_log2 & Fisher < 0.05),
+    aes(label = sub(";.*$", "", name)),
+    size = 3,
+    max.overlaps = 20,
+    box.padding = 0.4,
+    point.padding = 0.3,
+    segment.color = "grey50",
+    show.legend = FALSE
+  ) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black") +
+  geom_vline(xintercept = gm_cutoff_log2, linetype = "dashed", color = "blue") +
+  facet_wrap(~Condition, scales = "free_y") +
+  theme_bw(base_size = 13) +
+  theme(
+    legend.position = "top",
+    strip.background = element_rect(fill = "white", color = "black"),
+    panel.grid = element_blank()
+  ) +
+  labs(x = "Geometric Mean |log2 Fold Change|",
+       y = "-log10(Fisher Combined p-value)"
+  )
+
+# Save your plot 'spray' as PNG
+ggsave(
+  filename = "sprayPlot.png",
+  plot = spray,          # your ggplot object
+  width = 10,            # width in cm
+  height = 5,            # height in cm
+  units = "cm",
+  dpi = 300
+)
+
+```
+
+
