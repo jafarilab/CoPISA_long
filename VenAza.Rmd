@@ -12,23 +12,28 @@ output:
 ## Load Library
 ```{r, eval=FALSE, echo =FALSE, message=FALSE, warning=FALSE}
 library(rpx)
-library(msdata)
+#library(msdata)
 library(Spectra)
 library(tidyverse)
-library(cleaver)
+#library(cleaver)
 library(MSnbase)
 library(tidyverse)
 library(mzR)
 library(PSMatch)
 library(pheatmap)
 library(QFeatures)
-library(sageR)
+#library(sageR)
 library(SummarizedExperiment)
 library(factoextra)
 library(limma)
 library(DEP)
 library(ggrepel)
 library(data.table)
+
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("rpx")
 ```
 
 ## 1. Read evidence.txt
@@ -60,8 +65,6 @@ library(stringr)
 library(tibble)
 library(QFeatures)
 library(SummarizedExperiment)
-
-setDT(evidence)
 
 # ---------------------
 # Step 1: Filter evidence
@@ -391,7 +394,7 @@ for (prot_name in protein_sets) {
   dep <- make_se(row_df, columns, col_df)
   
   # Impute
-  dep <- impute(dep, fun = "MinProb", q = 0.01)
+  dep <- impute(dep, method = "MinProb", q = 0.01)
   
   # Remove Pool
   dep <- dep[, dep$condition != "Pool"]
@@ -421,6 +424,7 @@ res <- left_join(res, gene_df, by = "name")
 dep_results[[prot_name]] <- res
 }
 ```
+
 ```{r}
 ## Checking different thresholds
 alpha_vals <- c(0.01, 0.05, 0.1)
@@ -449,7 +453,7 @@ for (prot_name in protein_sets) {
   columns <- (ncol(row_df) - ncol(assay_mat) + 1):ncol(row_df)
   
   dep <- make_se(row_df, columns, col_df)
-  dep <- impute(dep, fun="MinProb", q=0.01)
+  dep <- impute(dep, method ="MinProb", q=0.01)
   dep <- dep[, dep$condition != "Pool"]
   
   dep <- test_diff(dep, type="control", control="C")
@@ -607,7 +611,7 @@ upset_combined <- lapply(names(dep_results), function(nm) {
     mutate(!!nm := as.integer(VA_vs_C_significant)) %>%
     select(-VA_vs_C_significant)
 }) %>%
-  reduce(full_join, by = "name")  # combine all 4 datasets by protein name
+  purrr::reduce(full_join, by = "name")  # combine all 4 datasets by protein name
 
 # Replace NAs with 0 (not significant)
 upset_combined[is.na(upset_combined)] <- 0
@@ -677,7 +681,7 @@ upset_combined <- lapply(names(dep_results), function(nm) {
     mutate(!!nm := as.integer(V_vs_C_significant)) %>%
     select(-V_vs_C_significant)
 }) %>%
-  reduce(full_join, by = "name")  # combine all 4 datasets by protein name
+  purrr::reduce(full_join, by = "name")  # combine all 4 datasets by protein name
 
 # Replace NAs with 0 (not significant)
 upset_combined[is.na(upset_combined)] <- 0
@@ -747,7 +751,7 @@ upset_combined <- lapply(names(dep_results), function(nm) {
     mutate(!!nm := as.integer(A_vs_C_significant)) %>%
     select(-A_vs_C_significant)
 }) %>%
-  reduce(full_join, by = "name")  # combine all 4 datasets by protein name
+  purrr::reduce(full_join, by = "name")  # combine all 4 datasets by protein name
 
 # Replace NAs with 0 (not significant)
 upset_combined[is.na(upset_combined)] <- 0
@@ -887,9 +891,9 @@ make_volcano <- function(res, prefix) {
     pivot_longer(
       cols = -c(name, gene),
       names_to = c("Treatment", ".value"),
-      names_pattern = "(.*)_vs_C_(.*)"
-    ) %>%
-    rename(log2FC = ratio,
+      names_pattern = "(.*)_vs_C_(ratio|p.val)"
+    )  %>%
+    mutate(log2FC = ratio,
            pval   = p.val) %>%
     mutate(
       Treatment = recode(Treatment,
@@ -994,13 +998,6 @@ make_volcano <- function(res, prefix) {
 
 
 ```{r}
-# for (nm in names(dep_results)) {
-#   make_volcano(dep_results[[nm]], nm)
-# }
-
-```
-
-```{r}
 #library(patchwork)
 
 # ---- 1. Define consistent axis limits ----
@@ -1061,16 +1058,20 @@ p3 <- plots[[1]]
 p4 <- plots[[2]] + theme(axis.title.y = element_blank())
 
 # ---- 5. Combine with shared legend ----
-combined_plot <- (p1 + p2) /
-                 (p3 + p4) +
+library(patchwork)
+
+combined_plot <- (
+  (p1 + p2) /
+  (p3 + p4)
+) +
   plot_layout(guides = "collect") &
   theme(
-  plot.title = element_text(face = "bold"),
-  legend.position = "bottom",
-  legend.text = element_text(size = 8),      # smaller text for items
-  legend.title = element_text(size = 9),     # slightly smaller title
-  legend.key.size = unit(0.6, "lines")       # smaller key boxes
-)
+    plot.title = element_text(face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 8),
+    legend.title = element_text(size = 9),
+    legend.key.size = unit(0.6, "lines")
+  )
 
 combined_plot
 ggsave("Volcano_4panel_combined.png",
@@ -1433,7 +1434,7 @@ merged <- imap(deps, function(df, i) {
     select(name = gene, ends_with("_p.val"), ends_with("_ratio")) %>%
     rename_with(~ paste0(.x, ".", i), -name)  # i is from imap
 }) %>%
-  reduce(inner_join, by = "name")
+  purrr::reduce(inner_join, by = "name")
 
 # -----------------------------
 # 2. Helper functions
@@ -1600,14 +1601,14 @@ spray <- ggplot(plot_data, aes(x = gmAbsFC, y = -log10(Fisher))) +
   )
 
 # Save your plot 'spray' as PNG
-ggsave(
-  filename = "sprayPlot.png",
-  plot = spray,          # your ggplot object
-  width = 10,            # width in cm
-  height = 5,            # height in cm
-  units = "cm",
-  dpi = 300
-)
+# ggsave(
+#   filename = "sprayPlot.png",
+#   plot = spray,          # your ggplot object
+#   width = 17,            # width in cm
+#   height = 9,            # height in cm
+#   units = "cm",
+#   dpi = 300
+# )
 
 ```
 
