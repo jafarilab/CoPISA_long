@@ -1493,11 +1493,11 @@ merged <- merged %>%
 # -----------------------------
 # 4. Geometric mean cutoff for |log2FC|
 # -----------------------------
-cutoffs_log2 <- c(0.3, 0.3)
-cutoffs_linear <- 2^cutoffs_log2
-gm_cutoff_linear <- exp(mean(log(cutoffs_linear)))
-gm_cutoff_log2 <- log2(gm_cutoff_linear)
-
+# cutoffs_log2 <- c(0.3, 0.3)
+# cutoffs_linear <- 2^cutoffs_log2
+# gm_cutoff_linear <- exp(mean(log(cutoffs_linear)))
+# gm_cutoff_log2 <- log2(gm_cutoff_linear)
+gm_cutoff_log2 <- quantile(abs(plot_data$gmAbsFC), 0.75, na.rm = TRUE)
 # -----------------------------
 # 5. Prepare data for plotting
 # -----------------------------
@@ -1600,6 +1600,7 @@ spray <- ggplot(plot_data, aes(x = gmAbsFC, y = -log10(Fisher))) +
        y = "-log10(Fisher Combined p-value)"
   )
 
+spray
 # Save your plot 'spray' as PNG
 # ggsave(
 #   filename = "sprayPlot.png",
@@ -1612,4 +1613,69 @@ spray <- ggplot(plot_data, aes(x = gmAbsFC, y = -log10(Fisher))) +
 
 ```
 
+```{r}
+library(dplyr)
+
+short_term_subset <- plot_data %>%
+  filter(
+    Condition == "Short-term living cell CoPISA vs \nShort-term Cell lysate CoPISA"
+  )
+
+short_term_subset <- short_term_subset %>%
+  mutate(
+    absent_in_long_term = !name %in% (
+      plot_data %>%
+        filter(
+          Condition %in% c(
+            "Long-term living cell CoPISA vs \nShort-term Cell lysate CoPISA",
+            "Long-term living cell CoPISA vs \nShort-term living cell CoPISA"
+          ),
+          significant == "Significant"
+        ) %>%
+        pull(name)
+    )
+  )
+
+table(short_term_subset$significant, short_term_subset$absent_in_long_term)
+
+short_term_subset <- short_term_subset %>%
+  mutate(
+    state = case_when(
+      significant == "Significant" & !absent_in_long_term ~ "Sig_in_long_term",
+      significant == "Significant" & absent_in_long_term  ~ "Sig_not_in_long_term",
+      significant == "Not significant" & !absent_in_long_term ~ "NS_in_long_term",
+      TRUE ~ "NS_not_in_long_term"
+    )
+  )
+
+genes_by_state <- short_term_subset %>%
+  group_by(state) %>%
+  summarise(
+    genes = list(name),
+    fc_values = list(FC_dep4),
+    .groups = "drop"
+  )
+
+# Drug MoA in Resistant cells
+(sig_long_term <- short_term_subset %>%
+  filter(state == "Sig_in_long_term") %>%
+  select(name, FC_dep4)%>% 
+  arrange(desc(FC_dep4)))
+
+# Drug MoA in Sensitive cells
+(sig_not_long_term <- short_term_subset %>%
+  filter(state == "Sig_not_in_long_term") %>%
+  select(name, FC_dep4) %>% 
+  arrange(desc(FC_dep4)))
+
+# (ns_long_term <- short_term_subset %>%
+#   filter(state == "NS_in_long_term") %>%
+#   select(name, FC_dep4)%>% 
+#   arrange(desc(FC_dep4)))
+# 
+# (ns_not_long_term <- short_term_subset %>%
+#   filter(state == "NS_not_in_long_term") %>%
+#   select(name, FC_dep4)%>% 
+#   arrange(desc(FC_dep4)))
+```
 
