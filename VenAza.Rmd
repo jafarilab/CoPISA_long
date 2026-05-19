@@ -1612,7 +1612,7 @@ spray
 # )
 
 ```
-
+# 18. R1-R4 group of proteins
 ```{r}
 library(dplyr)
 
@@ -1677,5 +1677,125 @@ genes_by_state <- short_term_subset %>%
 #   filter(state == "NS_not_in_long_term") %>%
 #   select(name, FC_dep4)%>% 
 #   arrange(desc(FC_dep4)))
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+
+df1 <- sig_long_term %>%
+  arrange(FC_dep4) %>%
+  mutate(
+    gene = factor(name, levels = name),  # preserves ranking
+    group = ifelse(FC_dep4 > 0.5, "> 0.5", "≤ 0.5")
+  )
+
+df2 <- sig_not_long_term %>%
+  arrange(FC_dep4) %>%
+  mutate(
+    gene = factor(name, levels = name),  # preserves ranking
+    group = ifelse(FC_dep4 > 0.5, "> 0.5", "≤ 0.5")
+  )
+
+
+
+r1_2 <- ggplot(df1, aes(x = gene, y = FC_dep4)) +
+  
+  # stems
+  geom_segment(aes(xend = gene, y = 0, yend = FC_dep4, color = group),
+               linewidth = 0.6) +
+  
+  # zero reference line
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
+  
+  # bubbles
+  geom_point(aes(color = group), size = 3) +
+  
+  scale_color_manual(values = c("> 0.5" = "#EA4335", "≤ 0.5" = "#4285F4")) +
+  
+  coord_flip() +   # 🔥 flip AFTER ordering
+  
+  theme_minimal(base_size = 12) +
+  
+  theme(
+    axis.text.y = element_text(size = 10),  # gene labels now on y-axis
+    axis.ticks = element_blank(),
+    
+    panel.grid = element_blank(),
+    
+    panel.border = element_rect(
+      colour = "black",
+      fill = NA,
+      linewidth = 0.8
+    ),
+    
+    legend.position = "bottom"
+  ) +
+  
+  labs(
+    x = NULL,
+    y = NULL,
+    color = "Long-term expression proteomics log2FC",
+    title = "Long-term \nretained targets"
+  )
+
+r3_4 <- ggplot(df2, aes(x = gene, y = FC_dep4)) +
+  
+  # stems
+  geom_segment(aes(xend = gene, y = 0, yend = FC_dep4, color = group),
+               linewidth = 0.6) +
+  
+  # zero reference line
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
+  
+  # bubbles
+  geom_point(aes(color = group), size = 3) +
+  
+  scale_color_manual(values = c("> 0.5" = "#EA4335", "≤ 0.5" = "#4285F4")) +
+  
+  coord_flip() +   # 🔥 flip AFTER ordering
+  
+  theme_minimal(base_size = 12) +
+  
+  theme(
+    axis.text.y = element_text(size = 10),  # gene labels now on y-axis
+    axis.ticks = element_blank(),
+    
+    panel.grid = element_blank(),
+    
+    panel.border = element_rect(
+      colour = "black",
+      fill = NA,
+      linewidth = 0.8
+    ),
+    
+    legend.position = "bottom"
+  ) +
+  
+  labs(
+    x = NULL,
+    y = NULL,
+    color = "Long-term expression proteomics log2FC",
+    title = "Long-term \nlost targets"
+  )
+```
+
+
+```{r}
+library(patchwork)
+
+combined_plot <- (
+  (r3_4  + r1_2) ) +
+  plot_layout(guides = "collect") &
+  theme(
+    plot.title = element_text(face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 8),
+    legend.title = element_text(size = 9),
+    legend.key.size = unit(0.6, "lines")
+  )
+
+combined_plot
 ```
 
