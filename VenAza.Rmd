@@ -1587,7 +1587,7 @@ spray <- ggplot(plot_data, aes(x = gmAbsFC, y = -log10(Fisher))) +
     segment.color = "grey50",
     show.legend = FALSE
   ) +
-  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "blue") +
   geom_vline(xintercept = gm_cutoff_log2, linetype = "dashed", color = "blue") +
   facet_wrap(~Condition, scales = "free_y") +
   theme_bw(base_size = 13) +
