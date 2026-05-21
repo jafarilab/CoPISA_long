@@ -1799,3 +1799,345 @@ combined_plot <- (
 combined_plot
 ```
 
+# 19. Combine mzMl and identification
+```{r}
+library(Spectra)
+files <- c("/Users/nvd448/Documents/VenAza Project/mzML/001_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/002_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/003_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/004_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/005_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/006_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/007_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/008_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/009_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/010_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/011_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/012_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/013_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/014_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/015_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/016_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/017_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/018_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/019_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/020_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/021_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/022_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/023_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/024_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/025_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/026_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/027_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/028_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/029_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/030_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/031_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/032_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/033_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/034_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/035_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/036_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/037_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/038_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/039_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/040_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/041_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/042_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/043_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/044_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/045_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/046_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/047_4TMT16_2DTMT_G24.mzML",
+  "/Users/nvd448/Documents/VenAza Project/mzML/048_4TMT16_2DTMT_G24.mzML")
+
+allKit_mzML <- Spectra(files, source = MsBackendMzR(), backendInitialize = TRUE)
+spectraVariables(allKit_mzML)
+
+# Extract numeric file index
+allKit_mzML$file_index <- as.integer(
+    sub("_.*", "", allKit_mzML$file)
+)
+
+```
+
+
+```{r}
+# Mapping to MaxQuant results
+
+library(data.table)
+
+mq <- fread("~/Documents/VenAza Project/msms.txt")
+colnames(mq)
+
+
+# Create clean file names in Spectra
+allKit_mzML$file <- basename(allKit_mzML$dataOrigin)
+allKit_mzML$file <- sub("\\.mzML$", "", allKit_mzML$file)
+
+# Extract numeric file index
+allKit_mzML$file_index <- as.integer(
+    sub("_.*", "", allKit_mzML$file)
+)
+
+# Define treatment groups
+allKit_mzML$treatment <- cut(
+    allKit_mzML$file_index,
+    breaks = c(0, 12, 24, 36, 48),
+    labels = c(
+        "Short-term living cell CoPISA",
+        "Long-term living cell CoPISA",
+        "Short-term Cell lysate CoPISA",
+        "Long-term expression proteomics"
+    )
+)
+
+table(allKit_mzML$treatment)
+
+# Create clean file names in mq
+mq$file <- mq$`Raw file`
+mq$file <- sub("\\.raw$", "", mq$file, ignore.case = TRUE)
+
+# Build matching key in Spectra and mq
+allKit_mzML$key <- paste(
+    allKit_mzML$file,
+    allKit_mzML$acquisitionNum,
+    sep = "_"
+)
+
+mq$key <- paste(
+    mq$file,
+    mq$`Scan number`,
+    sep = "_"
+)
+
+# Map and combine
+spid <- match(allKit_mzML$key, mq$key)
+
+allKit_mzML$sequence <- mq$Sequence[spid]
+allKit_mzML$modified_sequence <- mq$`Modified sequence`[spid]
+allKit_mzML$score <- mq$Score[spid]
+allKit_mzML$pep <- mq$PEP[spid]
+allKit_mzML$proteins <- mq$Proteins[spid]
+```
+
+# 20.# Protein-centric workflow
+
+```{r}
+#filter identified spectra only
+table(is.na(allKit_mzML$sequence))
+id_spec <- allKit_mzML[
+    !is.na(allKit_mzML$sequence) &
+    allKit_mzML$msLevel == 2
+]
+
+
+protein_id <- "O60462" #NRP2
+
+prot_spec <- id_spec[
+    grepl(protein_id, id_spec$proteins)
+]
+✔️
+# Find all peptides from that protein
+
+table(prot_spec$sequence)
+
+```
+
+```{r}
+library(data.table)
+
+dt <- as.data.table(spectraData(prot_spec))
+
+pep_summary <- dt[, .(
+    n_spectra = .N,
+    mean_score = mean(score, na.rm = TRUE),
+    median_score = median(score, na.rm = TRUE),
+    mean_pep = mean(pep, na.rm = TRUE),
+    median_pep = median(pep, na.rm = TRUE)
+), by = .(sequence, treatment)]
+
+# reshape to compare treatments easily
+
+library(reshape2)
+
+pep_matrix <- dcast(
+    pep_summary,
+    sequence ~ treatment,
+    value.var = "mean_score",
+    fill = 0
+)
+
+# compute global peptide ranking score
+pep_summary_all <- dt[, .(
+    n_spectra = .N,
+    mean_score = mean(score, na.rm = TRUE),
+    median_pep = median(pep, na.rm = TRUE),
+    n_treatments = uniqueN(treatment)
+), by = sequence]
+
+# peptide selection metric for MS2 visualization
+
+pep_summary_all[, consistency := n_treatments / 4]
+
+pep_summary_all[, final_score :=
+    mean_score *
+    consistency *
+    log1p(n_spectra)
+]
+
+pep_ranked <- pep_summary_all[order(-final_score)]
+top_peptides <- pep_ranked$sequence[1]
+top_peptides
+```
+
+```{r}
+
+pep_spec <- id_spec[id_spec$sequence == top_peptides]
+table(pep_spec$treatment)
+split by treatment
+spec_list <- split(pep_spec, pep_spec$treatment)
+
+# pick best spectrum per treatment (IMPORTANT)
+
+best_idx <- tapply(
+    seq_along(pep_spec$score),
+    pep_spec$treatment,
+    function(i) i[which.max(pep_spec$score[i])]
+)
+
+best_spec <- pep_spec[unlist(best_idx)]
+
+#generate theoretical fragments (PSMatch)
+
+library(PSMatch)
+
+frags <- calculateFragments(top_peptides)
+
+```
+
+```{r}
+# extract MS2 peak data (THIS is key for ggplot)
+
+library(dplyr)
+library(ggplot2)
+
+best_list <- split(best_spec, best_spec$treatment)
+
+get_ms2_df <- function(sp, treatment_name) {
+
+    mz_vals <- mz(sp)
+    int_vals <- intensity(sp)
+
+    data.frame(
+        mz = mz_vals,
+        intensity = int_vals,
+        treatment = treatment_name
+    )
+}
+
+ms2_df <- do.call(rbind, lapply(names(best_list), function(t) {
+    get_ms2_df(best_list[[t]][1], t)
+}))
+
+ms2_df_clean <- data.frame(
+    mz = as.numeric(ms2_df$mz.value),
+    intensity = as.numeric(ms2_df$intensity.value),
+    treatment = ms2_df$treatment
+)
+
+# normalize per treatment
+ms2_df_clean <- ms2_df_clean %>%
+    group_by(treatment) %>%
+    mutate(intensity = intensity / max(intensity, na.rm = TRUE)) %>%
+    ungroup()
+
+# Fragment annotation (b/y + peak matching)
+frag_df <- data.frame(frags) %>%
+    filter(mz > 0)
+
+frag_df$ion_type <- ifelse(grepl("^b", frag_df$ion), "b", "y")
+
+match_fragments <- function(ms2, frag, tol = 0.5) {
+
+    frag$peak_mz <- NA
+    frag$peak_intensity <- NA
+
+    for (i in seq_len(nrow(frag))) {
+
+        idx <- which(abs(ms2$mz - frag$mz[i]) <= tol)
+
+        if (length(idx) > 0) {
+            best <- idx[which.max(ms2$intensity[idx])]
+
+            frag$peak_mz[i] <- ms2$mz[best]
+            frag$peak_intensity[i] <- ms2$intensity[best]
+        }
+    }
+
+    frag
+}
+
+annotated_list <- lapply(split(ms2_df_clean, ms2_df_clean$treatment), function(df) {
+    match_fragments(df, frag_df)
+})
+```
+
+
+```{r}
+plot_ms2 <- function(ms2_df_clean, frag_annot, title) {
+
+    ggplot(ms2_df_clean, aes(x = mz, y = intensity)) +
+
+        # MS2 spectrum
+        geom_segment(
+            aes(xend = mz, yend = 0),
+            color = "grey30"
+        ) +
+
+        # b ions
+        geom_point(
+            data = subset(frag_annot, ion_type == "b" & !is.na(peak_mz)),
+            aes(x = peak_mz, y = peak_intensity),
+            color = "blue",
+            size = 2.5
+        ) +
+
+        # y ions
+        geom_point(
+            data = subset(frag_annot, ion_type == "y" & !is.na(peak_mz)),
+            aes(x = peak_mz, y = peak_intensity),
+            color = "darkgreen",
+            size = 2.5
+        ) +
+
+        # labels
+        geom_text(
+            data = subset(frag_annot, !is.na(peak_mz)),
+            aes(x = peak_mz, y = peak_intensity, label = ion),
+            vjust = -0.7,
+            size = 3
+        ) +
+
+        facet_wrap(~ treatment, ncol = 2) +
+
+        labs(
+            title = title,
+            x = "m/z",
+            y = "Normalized intensity"
+        ) +
+
+        theme_classic() +
+        theme(
+            strip.text = element_text(size = 12, face = "bold")
+        )
+}
+frag_annot_all <- do.call(rbind, annotated_list)
+
+p <- plot_ms2(ms2_df_clean, frag_annot_all, top_peptides)
+
+p
+```
+
+
+
