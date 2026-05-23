@@ -1921,34 +1921,53 @@ allKit_mzML$pep <- mq$PEP[spid]
 allKit_mzML$proteins <- mq$Proteins[spid]
 ```
 
-# 20.# Protein-centric workflow
+# 20. Protein-centric workflow
 
 ```{r}
-#filter identified spectra only
-table(is.na(allKit_mzML$sequence))
+# =========================================================
+# COMPLETE PUBLICATION-STYLE MS/MS PIPELINE
+# Protein -> Best peptide -> Best spectra -> Fragmentation plot
+# =========================================================
+
+library(dplyr)
+library(data.table)
+library(reshape2)
+library(ggplot2)
+library(PSMatch)
+library(patchwork)
+library(cowplot)
+library(gridExtra)
+
+# =========================================================
+# 1. FILTER IDENTIFIED MS2 SPECTRA
+# =========================================================
+
 id_spec <- allKit_mzML[
     !is.na(allKit_mzML$sequence) &
     allKit_mzML$msLevel == 2
 ]
 
+# =========================================================
+# 2. SELECT PROTEIN OF INTEREST
+# =========================================================
 
-protein_id <- "O60462" #NRP2
-
+protein_id <- "O60462"   # NRP2
+Gene_name <- "NRP2"
 prot_spec <- id_spec[
     grepl(protein_id, id_spec$proteins)
 ]
-✔️
-# Find all peptides from that protein
 
-table(prot_spec$sequence)
+cat("Number of spectra from protein:", length(prot_spec), "\n")
 
-```
+# =========================================================
+# 3. PEPTIDE SUMMARY + RANKING
+# =========================================================
 
-```{r}
-library(data.table)
+dt <- as.data.table(
+    spectraData(prot_spec)
+)
 
-dt <- as.data.table(spectraData(prot_spec))
-
+# peptide statistics per treatment
 pep_summary <- dt[, .(
     n_spectra = .N,
     mean_score = mean(score, na.rm = TRUE),
@@ -1957,18 +1976,7 @@ pep_summary <- dt[, .(
     median_pep = median(pep, na.rm = TRUE)
 ), by = .(sequence, treatment)]
 
-# reshape to compare treatments easily
-
-library(reshape2)
-
-pep_matrix <- dcast(
-    pep_summary,
-    sequence ~ treatment,
-    value.var = "mean_score",
-    fill = 0
-)
-
-# compute global peptide ranking score
+# peptide statistics globally
 pep_summary_all <- dt[, .(
     n_spectra = .N,
     mean_score = mean(score, na.rm = TRUE),
@@ -1976,168 +1984,427 @@ pep_summary_all <- dt[, .(
     n_treatments = uniqueN(treatment)
 ), by = sequence]
 
-# peptide selection metric for MS2 visualization
+# consistency metric
+pep_summary_all[, consistency :=
+    n_treatments / max(n_treatments)
+]
 
-pep_summary_all[, consistency := n_treatments / 4]
-
+# final ranking score
 pep_summary_all[, final_score :=
     mean_score *
     consistency *
     log1p(n_spectra)
 ]
 
-pep_ranked <- pep_summary_all[order(-final_score)]
-top_peptides <- pep_ranked$sequence[1]
-top_peptides
-```
+# rank peptides
+pep_ranked <- pep_summary_all[
+    order(-final_score)
+]
 
-```{r}
+top_peptide <- pep_ranked$sequence[1]
 
-pep_spec <- id_spec[id_spec$sequence == top_peptides]
-table(pep_spec$treatment)
-split by treatment
-spec_list <- split(pep_spec, pep_spec$treatment)
+cat("Selected peptide:", top_peptide, "\n")
 
-# pick best spectrum per treatment (IMPORTANT)
+# =========================================================
+# 4. SELECT BEST SPECTRA PER TREATMENT
+# =========================================================
 
+pep_spec <- id_spec[
+    id_spec$sequence == top_peptide
+]
+
+spec_list <- split(
+    pep_spec,
+    pep_spec$treatment
+)
+
+# best spectrum index per treatment
 best_idx <- tapply(
     seq_along(pep_spec$score),
     pep_spec$treatment,
-    function(i) i[which.max(pep_spec$score[i])]
+    function(i) i[
+        which.max(pep_spec$score[i])
+    ]
 )
 
-best_spec <- pep_spec[unlist(best_idx)]
+best_spec <- pep_spec[
+    unlist(best_idx)
+]
 
-#generate theoretical fragments (PSMatch)
+# =========================================================
+# 5. GENERATE THEORETICAL FRAGMENTS
+# =========================================================
 
-library(PSMatch)
+frags <- calculateFragments(top_peptide)
 
-frags <- calculateFragments(top_peptides)
+frag_df <- data.frame(frags) %>%
+    filter(mz > 0)
 
-```
+frag_df$ion_type <- ifelse(
+    grepl("^b", frag_df$ion),
+    "b",
+    "y"
+)
 
-```{r}
-# extract MS2 peak data (THIS is key for ggplot)
+# =========================================================
+# 6. EXTRACT MS2 PEAKS
+# =========================================================
 
-library(dplyr)
-library(ggplot2)
+best_list <- split(
+    best_spec,
+    best_spec$treatment
+)
 
-best_list <- split(best_spec, best_spec$treatment)
-
-get_ms2_df <- function(sp, treatment_name) {
-
-    mz_vals <- mz(sp)
-    int_vals <- intensity(sp)
+extract_ms2 <- function(spec, treatment_name) {
 
     data.frame(
-        mz = mz_vals,
-        intensity = int_vals,
+        mz = as.numeric(mz(spec)[[1]]),
+        intensity = as.numeric(intensity(spec)[[1]]),
         treatment = treatment_name
     )
 }
 
-ms2_df <- do.call(rbind, lapply(names(best_list), function(t) {
-    get_ms2_df(best_list[[t]][1], t)
-}))
+ms2_df <- do.call(
+    rbind,
+    lapply(names(best_list), function(tr) {
 
-ms2_df_clean <- data.frame(
-    mz = as.numeric(ms2_df$mz.value),
-    intensity = as.numeric(ms2_df$intensity.value),
-    treatment = ms2_df$treatment
+        extract_ms2(
+            best_list[[tr]][1],
+            tr
+        )
+    })
 )
 
-# normalize per treatment
-ms2_df_clean <- ms2_df_clean %>%
+# =========================================================
+# 7. SANITY CHECKS
+# =========================================================
+
+stopifnot(
+    "mz" %in% names(ms2_df),
+    "intensity" %in% names(ms2_df),
+    is.numeric(ms2_df$mz),
+    is.numeric(ms2_df$intensity)
+)
+
+# =========================================================
+# 8. NORMALIZE INTENSITIES
+# =========================================================
+
+ms2_df <- ms2_df %>%
     group_by(treatment) %>%
-    mutate(intensity = intensity / max(intensity, na.rm = TRUE)) %>%
+    mutate(
+        intensity =
+            intensity /
+            max(intensity, na.rm = TRUE)
+    ) %>%
     ungroup()
 
-# Fragment annotation (b/y + peak matching)
-frag_df <- data.frame(frags) %>%
-    filter(mz > 0)
-
-frag_df$ion_type <- ifelse(grepl("^b", frag_df$ion), "b", "y")
+# =========================================================
+# 9. MATCH FRAGMENTS TO PEAKS
+# =========================================================
 
 match_fragments <- function(ms2, frag, tol = 0.5) {
 
     frag$peak_mz <- NA
     frag$peak_intensity <- NA
+    frag$matched <- FALSE
 
     for (i in seq_len(nrow(frag))) {
 
-        idx <- which(abs(ms2$mz - frag$mz[i]) <= tol)
+        idx <- which(
+            abs(ms2$mz - frag$mz[i]) <= tol
+        )
 
-        if (length(idx) > 0) {
-            best <- idx[which.max(ms2$intensity[idx])]
+        if(length(idx) > 0) {
+
+            best <- idx[
+                which.max(ms2$intensity[idx])
+            ]
 
             frag$peak_mz[i] <- ms2$mz[best]
             frag$peak_intensity[i] <- ms2$intensity[best]
+            frag$matched[i] <- TRUE
         }
     }
 
     frag
 }
 
-annotated_list <- lapply(split(ms2_df_clean, ms2_df_clean$treatment), function(df) {
-    match_fragments(df, frag_df)
-})
-```
+annotated_list <- lapply(
+    split(ms2_df, ms2_df$treatment),
+    function(df) {
+        match_fragments(
+            df,
+            frag_df
+        )
+    }
+)
 
+frag_annot <- bind_rows(
+    annotated_list,
+    .id = "treatment"
+)
 
-```{r}
-plot_ms2 <- function(ms2_df_clean, frag_annot, title) {
+# =========================================================
+# 10. PLOT FUNCTION (POLISHED)
+# =========================================================
 
-    ggplot(ms2_df_clean, aes(x = mz, y = intensity)) +
+plot_spectrum <- function(ms2, annot, panel_title) {
 
-        # MS2 spectrum
+    ggplot(ms2, aes(x = mz, y = intensity)) +
+
+        # raw spectrum
         geom_segment(
             aes(xend = mz, yend = 0),
-            color = "grey30"
+            linewidth = 0.25,
+            color = "black"
         ) +
 
         # b ions
-        geom_point(
-            data = subset(frag_annot, ion_type == "b" & !is.na(peak_mz)),
-            aes(x = peak_mz, y = peak_intensity),
-            color = "blue",
-            size = 2.5
+        geom_segment(
+            data = subset(annot, ion_type == "b" & matched),
+            aes(x = peak_mz, xend = peak_mz, y = 0, yend = peak_intensity),
+            color = "royalblue",
+            linewidth = 0.5
         ) +
 
         # y ions
+        geom_segment(
+            data = subset(annot, ion_type == "y" & matched),
+            aes(x = peak_mz, xend = peak_mz, y = 0, yend = peak_intensity),
+            color = "forestgreen",
+            linewidth = 0.5
+        ) +
+
+        # matched peaks
         geom_point(
-            data = subset(frag_annot, ion_type == "y" & !is.na(peak_mz)),
+            data = subset(annot, matched),
             aes(x = peak_mz, y = peak_intensity),
-            color = "darkgreen",
-            size = 2.5
+            color = "red",
+            size = 1.6
         ) +
 
-        # labels
+        # ion labels
         geom_text(
-            data = subset(frag_annot, !is.na(peak_mz)),
-            aes(x = peak_mz, y = peak_intensity, label = ion),
+            data = subset(annot, matched),
+            aes(x = peak_mz, y = peak_intensity, label = ion, color = ion_type),
+            size = 3,
+            fontface = "bold",
             vjust = -0.7,
-            size = 3
+            show.legend = FALSE
         ) +
 
-        facet_wrap(~ treatment, ncol = 2) +
+        scale_color_manual(values = c(b = "royalblue", y = "forestgreen")) +
 
         labs(
-            title = title,
+            title = NULL,
             x = "m/z",
-            y = "Normalized intensity"
+            y = "Relative intensity"
         ) +
 
-        theme_classic() +
+        ylim(0, 1.15) +
+
+        # ✔ single clean metadata tag (corner label)
+        annotate(
+            "label",
+            x = Inf,
+            y = Inf,
+            label = panel_title,
+            hjust = 1.05,
+            vjust = 1.2,
+            size = 3.3,
+            fontface = "bold",
+            label.size = 0.25
+        ) +
+
+        theme_classic(base_size = 12) +
+
         theme(
-            strip.text = element_text(size = 12, face = "bold")
+            axis.title = element_text(face = "bold")
         )
 }
-frag_annot_all <- do.call(rbind, annotated_list)
 
-p <- plot_ms2(ms2_df_clean, frag_annot_all, top_peptides)
+# =========================================================
+# 11. BUILD SPECTRUM PANELS (POLISHED)
+# =========================================================
 
-p
+panel_list <- lapply(
+    unique(ms2_df$treatment),
+    function(tr) {
+
+        ms2_sub <- subset(ms2_df, treatment == tr)
+        ann_sub <- subset(frag_annot, treatment == tr)
+
+        # extract metadata safely
+        score_val <- best_spec$score[best_spec$treatment == tr][1]
+        charge <- best_spec$precursorCharge[best_spec$treatment == tr][1]
+
+        panel_title <- paste0(
+            tr,
+            " | score: ", round(score_val, 2),
+            " | z=", charge, "+"
+        )
+
+        plot_spectrum(ms2_sub, ann_sub, panel_title)
+    }
+)
+
+main_panels <- wrap_plots(panel_list, ncol = 2)
+
+# =========================================================
+# 12. PEPTIDE COVERAGE MAP
+# =========================================================
+
+seq_df <- data.frame(
+    aa = strsplit(top_peptide, "")[[1]],
+    pos = seq_along(
+        strsplit(top_peptide, "")[[1]]
+    )
+)
+
+top_map <- ggplot(
+    seq_df,
+    aes(
+        x = pos,
+        y = 0
+    )
+) +
+
+    geom_text(
+        aes(label = aa),
+        size = 6,
+        fontface = "bold"
+    ) +
+
+    geom_segment(
+        aes(
+            x = pos - 0.45,
+            xend = pos + 0.45,
+            y = 0.1,
+            yend = 0.1
+        ),
+        color = "royalblue",
+        linewidth = 1.2
+    ) +
+
+    geom_segment(
+        aes(
+            x = pos - 0.45,
+            xend = pos + 0.45,
+            y = -0.1,
+            yend = -0.1
+        ),
+        color = "forestgreen",
+        linewidth = 1.2
+    ) +
+
+    annotate(
+        "text",
+        x = 1,
+        y = 0.9,
+        label = "b ions",
+        color = "royalblue",
+        fontface = "bold"
+    ) +
+
+    annotate(
+        "text",
+        x = 1,
+        y = -0.9,
+        label = "y ions",
+        color = "forestgreen",
+        fontface = "bold"
+    ) +
+
+    theme_void()
+
+# =========================================================
+# 13. METADATA PANEL
+# =========================================================
+
+precursor_mz <- round(
+    precursorMz(best_spec)[1],
+    4
+)
+
+charge <- best_spec$precursorCharge[1]
+
+meta_text <- paste0(
+    "Protein: ", protein_id, "\n",
+    "Gene name: ", Gene_name, "\n",
+    #"Peptide: ", top_peptide, "\n",
+    "Precursor m/z: ",
+    precursor_mz,
+    " (",
+    charge,
+    "+)\n",
+    "Peptide length: ",
+    nchar(top_peptide),
+    " aa\n",
+    "Fragment ion tolerance: ±0.5 Da"
+)
+
+meta_plot <- ggplot() +
+
+    annotate(
+        "text",
+        x = 0,
+        y = 1,
+        label = meta_text,
+        hjust = 0,
+        vjust = 1,
+        size = 4
+    ) +
+
+    theme_void()
+
+# =========================================================
+# 14. FINAL LAYOUT
+# =========================================================
+
+final_plot <- plot_grid(
+    #meta_plot,
+    #top_map,
+    main_panels,
+    ncol = 1,
+    rel_heights = c(
+        0.12,
+        0.15,
+        0.73
+    )
+)
+
+# =========================================================
+# 15. TITLE
+# =========================================================
+
+# title_plot <- ggdraw() +
+# 
+#     draw_label(
+#         paste0(
+#             "MS/MS Fragmentation of Peptide: ",
+#             top_peptide
+#         ),
+#         fontface = "bold",
+#         size = 20
+#     )
+
+# =========================================================
+# 16. COMPLETE FIGURE
+# =========================================================
+
+publication_figure <- plot_grid(
+    #title_plot,
+    final_plot,
+    ncol = 1,
+    rel_heights = c(
+        0.06,
+        0.94
+    )
+)
+
+publication_figure
+
+
 ```
-
-
-
+# 21
