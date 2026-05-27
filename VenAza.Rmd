@@ -1799,6 +1799,76 @@ combined_plot <- (
 combined_plot
 ```
 
+```{r}
+library(tidyverse)
+library(tidyr)
+# install.packages("devtools")
+# devtools::install_github("ricardo-bion/ggradar")
+library(ggradar)
+library(scales)
+library(scales)
+library(gridExtra)
+
+dep1_fc <- dep_results$Kit4_3_norm_protein %>%
+  filter(gene %in% common_proteins) %>%
+  select(name = gene, `Long-term living cell CoPISA` = VA_vs_C_ratio)
+
+dep2_fc <- dep_results$Kit4_2_norm_protein %>% 
+  filter(gene %in% common_proteins) %>%
+  select(name = gene, `Short-term living cell CoPISA` = VA_vs_C_ratio)
+
+dep3_fc <- dep_results$Kit4_4_norm_protein %>% 
+  filter(gene %in% common_proteins) %>%
+  select(name = gene, `Short-term Cell lysate CoPISA` = VA_vs_C_ratio)
+
+dep4_fc <- dep_results$Kit4_5_norm_protein %>% 
+  filter(gene %in% common_proteins) %>%
+  select(name = gene, `Long-term expression proteomics` = VA_vs_C_ratio)
+
+# Merge datasets
+df_wide <- reduce(
+  list(dep1_fc, dep2_fc, dep3_fc, dep4_fc),
+  full_join,
+  by = "name"
+)
+
+selected_proteins <- c("NRP2", "RPL18", "PLP2", "RPS28", "NOTCH1")
+
+# Prepare radar data
+df_radar <- df_wide %>%
+  filter(name %in% selected_proteins) %>%
+  replace(is.na(.), 0) %>%
+  mutate(across(
+    -name,
+    ~ rescale(.x, to = c(0, 1), from = c(-3, 3))
+  ))
+
+# Create one radar plot per gene
+plot_list <- lapply(1:nrow(df_radar), function(i) {
+
+  gene_df <- df_radar[i, ]
+
+  ggradar(
+    gene_df,
+    background.circle.colour = "white",
+    gridline.mid.colour = "gray80",
+    gridline.max.colour = "gray70",
+    gridline.min.colour = "gray90",
+    axis.line.colour = "gray60",
+    group.line.width = 1.5,
+    group.point.size = 3,
+    group.colours = "steelblue",
+    legend.position = "none",
+    values.radar = c("0", "0.5", "1")
+  ) +
+    ggtitle(gene_df$name)
+})
+
+# Arrange plots
+grid.arrange(grobs = plot_list, ncol = 2)
+```
+
+
 # 19. Combine mzMl and identification
 ```{r}
 library(Spectra)
