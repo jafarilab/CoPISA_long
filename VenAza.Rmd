@@ -1603,7 +1603,7 @@ plot_data <- plot_data %>%
 spray <- ggplot(plot_data, aes(x = gmAbsFC, y = -log10(Fisher))) +
   geom_point(aes(
     color = ifelse(abs(gmAbsFC) > gm_cutoff_log2 & Fisher < 0.05,
-                   dep_results$Kit4_5_norm_protein$A_vs_C_ratio[match(name, dep_results$Kit4_5_norm_protein$gene)],
+                   dep_results$Kit4_5_norm_protein$VA_vs_C_ratio[match(name, dep_results$Kit4_5_norm_protein$gene)],
                    NA)
   ), alpha = 0.8, size = 2) +
   scale_color_gradient2(
@@ -1861,7 +1861,7 @@ dep4_fc <- dep_results$Kit4_5_norm_protein %>%
   select(name = gene, `Long-term expression proteomics` = VA_vs_C_ratio)
 
 # Merge datasets
-df_wide <- reduce(
+df_wide <- purrr::reduce(
   list(dep1_fc, dep2_fc, dep3_fc, dep4_fc),
   full_join,
   by = "name"
