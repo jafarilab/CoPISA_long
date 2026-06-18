@@ -16,7 +16,7 @@ library(rpx)
 library(Spectra)
 library(tidyverse)
 #library(cleaver)
-library(MSnbase)
+#library(MSnbase)
 library(tidyverse)
 library(mzR)
 library(PSMatch)
@@ -394,7 +394,7 @@ for (prot_name in protein_sets) {
   dep <- make_se(row_df, columns, col_df)
   
   # Impute
-  dep <- impute(dep, method = "MinProb", q = 0.01)
+  dep <- DEP::impute(dep, fun = "MinProb", q = 0.01)
   
   # Remove Pool
   dep <- dep[, dep$condition != "Pool"]
@@ -415,6 +415,39 @@ for (prot_name in protein_sets) {
   # Store results (NOW includes gene column)
   res <- get_results(dep)
 
+  
+# -------------------------
+# Normalize Kit4.3 vs Kit4.5 (ALL contrasts)
+# -------------------------
+
+if (prot_name == "Kit4_3_norm_protein") {
+
+  kit45 <- dep_results[["Kit4_5_norm_protein"]]
+
+  if (!is.null(kit45)) {
+
+    kit45_fc <- kit45 %>%
+      dplyr::select(
+        name,
+        A_vs_C_ratio_45  = A_vs_C_ratio,
+        V_vs_C_ratio_45  = V_vs_C_ratio,
+        VA_vs_C_ratio_45 = VA_vs_C_ratio
+      )
+
+    res <- res %>%
+      dplyr::left_join(kit45_fc, by = "name") %>%
+      dplyr::mutate(
+        A_vs_C_ratio  = A_vs_C_ratio  - A_vs_C_ratio_45,
+        V_vs_C_ratio  = V_vs_C_ratio  - V_vs_C_ratio_45,
+        VA_vs_C_ratio = VA_vs_C_ratio - VA_vs_C_ratio_45
+      ) %>%
+      dplyr::select(
+        -A_vs_C_ratio_45,
+        -V_vs_C_ratio_45,
+        -VA_vs_C_ratio_45
+      )
+  }
+}
 # Extract gene names from DEP object
 gene_df <- as.data.frame(rowData(dep))[, c("name", "gene")]
 
@@ -453,7 +486,7 @@ for (prot_name in protein_sets) {
   columns <- (ncol(row_df) - ncol(assay_mat) + 1):ncol(row_df)
   
   dep <- make_se(row_df, columns, col_df)
-  dep <- impute(dep, method ="MinProb", q=0.01)
+  dep <- impute(dep, fun ="MinProb", q=0.01)
   dep <- dep[, dep$condition != "Pool"]
   
   dep <- test_diff(dep, type="control", control="C")
@@ -501,7 +534,7 @@ library(dplyr)
 library(UpSetR)
 library(viridisLite)
 
-vcols <- viridis(6)
+vcols <- viridis(8)
 
 # Google colors for sets
 treatment_colors <- c("A"=vcols[2],"V"=vcols[4],"VA"=vcols[6])
@@ -932,7 +965,7 @@ make_volcano <- function(res, prefix) {
   
   # 🔥 MODIFIED: define custom viridis colors
   library(viridis)
-  vcols <- viridis(6)
+  vcols <- viridis(8)
   treatment_colors <- c(
     "Azacytidine"             = vcols[2],
     "Venetoclax"              = vcols[4],
@@ -986,7 +1019,9 @@ make_volcano <- function(res, prefix) {
     ) +
     theme(
       plot.title = element_text(face = "bold"),
-      legend.position = "bottom"
+      legend.position = "bottom",
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank()
     )
   
   return(p)
@@ -1589,7 +1624,7 @@ spray <- ggplot(plot_data, aes(x = gmAbsFC, y = -log10(Fisher))) +
   ) +
   geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "blue") +
   geom_vline(xintercept = gm_cutoff_log2, linetype = "dashed", color = "blue") +
-  facet_wrap(~Condition, scales = "free_y") +
+  facet_wrap(~Condition, scales = "free_y", ncol = 1) +
   theme_bw(base_size = 13) +
   theme(
     legend.position = "top",
