@@ -916,28 +916,34 @@ make_volcano <- function(res, prefix) {
   if (is.na(plot_name)) plot_name <- prefix
   
   # Prepare long format
-  long_df <- res %>%
-    select(name, gene,
-           A_vs_C_ratio, A_vs_C_p.val,
-           V_vs_C_ratio, V_vs_C_p.val,
-           VA_vs_C_ratio, VA_vs_C_p.val) %>%
-    pivot_longer(
-      cols = -c(name, gene),
-      names_to = c("Treatment", ".value"),
-      names_pattern = "(.*)_vs_C_(ratio|p.val)"
-    )  %>%
-    mutate(log2FC = ratio,
-           pval   = p.val) %>%
-    mutate(
-      Treatment = recode(Treatment,
-                         "A"  = "Azacytidine",
-                         "VA" = "Azacytidine + Venetoclax",
-                         "V"  = "Venetoclax"),
-      negLogP = -log10(pval),
-      Significant = (pval < pval_thresh & abs(log2FC) > lfc_thresh),
-      gene = ifelse(is.na(gene) | gene == "", name, gene),
-      gene = sub(";.*", "", gene)
-    )
+  long_df <<- res %>%
+  select(name, gene,
+         A_vs_C_ratio, A_vs_C_p.val, A_vs_C_p.adj,
+         V_vs_C_ratio, V_vs_C_p.val, V_vs_C_p.adj,
+         VA_vs_C_ratio, VA_vs_C_p.val, VA_vs_C_p.adj) %>%
+
+  pivot_longer(
+    cols = -c(name, gene),
+    names_to = c("Treatment", ".value"),
+    names_pattern = "(.*)_vs_C_(ratio|p\\.val|p\\.adj)"
+  ) %>%
+
+  mutate(
+    log2FC = ratio,
+    pval   = p.val,
+    padj   = p.adj   # 🔥 now this exists
+  ) %>%
+
+  mutate(
+    Treatment = recode(Treatment,
+                       "A"  = "Azacytidine",
+                       "VA" = "Azacytidine + Venetoclax",
+                       "V"  = "Venetoclax"),
+    negLogP = -log10(pval),
+    Significant = (pval < pval_thresh & abs(log2FC) > lfc_thresh),
+    gene = ifelse(is.na(gene) | gene == "", name, gene),
+    gene = sub(";.*", "", gene)
+  )
   
   # Determine shared vs unique (ONLY among significant proteins)
   shared_info <- long_df %>%
@@ -1150,7 +1156,7 @@ bcl2_summary
 
 
 # UniProt ID to check
-uniprot_id <- "P10415"
+uniprot_id <- "Q9UJW3"
 
 # Search across all dep_results
 uniprot_summary <- lapply(names(dep_results), function(nm) {
@@ -1164,7 +1170,7 @@ uniprot_summary <- lapply(names(dep_results), function(nm) {
 # View result
 uniprot_summary
 
-uniprot_id <- "Q24K09"
+uniprot_id <- "Q9Y6K1"
 
 # Loop through all protein-level assays
 for (nm in grep("_norm_protein$", names(qf), value = TRUE)) {
