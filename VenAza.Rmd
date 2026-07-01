@@ -338,6 +338,154 @@ qfInfo <- tibble(
   n_cols = map_int(qf, ncol)
 ) %>%
   arrange(assay)
+
+qfInfo
+
+plot(qf)
+```
+```{r}
+library(QFeatures)
+library(dplyr)
+library(purrr)
+library(ggplot2)
+
+# Select assays
+protein_assays <- grep("^Kit4_.*_norm_protein$", names(qf), value = TRUE)
+peptide_assays <- grep("^Kit4_.*_norm_peptide$", names(qf), value = TRUE)
+
+# Friendly labels
+condition_labels <- c(
+  "Kit4_2" = "Short-term living cell CoPISA",
+  "Kit4_3" = "Long-term living cell CoPISA",
+  "Kit4_4" = "Short-term Cell lysate CoPISA",
+  "Kit4_5" = "Long-term expression proteomics"
+)
+
+# Count identified features in each assay
+count_identified <- function(assays, type) {
+  tibble(
+    assay = assays,
+    identified = map_int(assays, ~{
+      mat <- assay(qf, .x)
+      sum(rowSums(!is.na(mat)) > 0)
+    }),
+    Type = type
+  ) %>%
+    mutate(
+      Condition = condition_labels[sub("_norm_(protein|peptide)$", "", assay)]
+    )
+}
+
+protein_counts <- count_identified(protein_assays, "Protein")
+peptide_counts <- count_identified(peptide_assays, "Peptide")
+
+# Total unique proteins
+total_proteins <- length(unique(unlist(
+  lapply(protein_assays, function(a) {
+    mat <- assay(qf, a)
+    rownames(mat)[rowSums(!is.na(mat)) > 0]
+  })
+)))
+
+# Total unique peptides
+total_peptides <- length(unique(unlist(
+  lapply(peptide_assays, function(a) {
+    mat <- assay(qf, a)
+    rownames(mat)[rowSums(!is.na(mat)) > 0]
+  })
+)))
+
+# Add totals
+total_df <- tibble(
+  Condition = "Total unique",
+  identified = c(total_proteins, total_peptides),
+  Type = c("Protein", "Peptide")
+)
+
+plot_df <- bind_rows(
+  protein_counts %>% select(Condition, identified, Type),
+  peptide_counts %>% select(Condition, identified, Type),
+  total_df
+)
+plot_df$Condition <- factor(
+  plot_df$Condition,
+  levels = c(
+    "Short-term living cell CoPISA",
+    "Long-term living cell CoPISA",
+    "Short-term Cell lysate CoPISA",
+    "Long-term expression proteomics",
+    "Total unique"
+  )
+)
+
+plot_df <- plot_df %>%
+  arrange(Condition, Type) %>%
+  mutate(
+    group = as.numeric(Condition),
+    x = ifelse(
+      Type == "Protein",
+      group - 0.15,
+      group + 0.15
+    )
+  )
+# Preserve order
+plot_df$Condition <- factor(
+  plot_df$Condition,
+  levels = c(
+    "Short-term living cell CoPISA",
+    "Long-term living cell CoPISA",
+    "Short-term Cell lysate CoPISA",
+    "Long-term expression proteomics",
+    "Total unique"
+  )
+)
+
+# Plot
+library(ggplot2)
+
+ggplot(plot_df, aes(x = x, y = identified, colour = Type)) +
+
+  geom_segment(aes(xend = x,
+                   y = 0,
+                   yend = identified),
+               linewidth = 1) +
+
+  geom_point(size = 4) +
+
+  geom_text(aes(label = identified),
+            vjust = -0.7,
+            size = 3.8,
+            show.legend = FALSE) +
+
+  scale_x_continuous(
+    breaks = 1:5,
+    labels = c(
+      "Short-term living cell CoPISA",
+      "Long-term living cell CoPISA",
+      "Short-term Cell lysate CoPISA",
+      "Long-term expression proteomics",
+      "Total unique"
+    )
+  ) +
+
+  scale_colour_manual(values = c(
+    Protein = "#0072B2",
+    Peptide = "#D55E00"
+  )) +
+
+  expand_limits(y = max(plot_df$identified) * 1.08) +
+
+  labs(
+    x = NULL,
+    y = "Number of identified features",
+    colour = NULL
+  ) +
+
+  theme_classic(base_size = 14) +
+  theme(
+    legend.position = "right",
+    axis.text.x = element_text(size = 11)
+  )+ coord_flip()
 ```
 
 ## 11. Differential analysis
@@ -524,7 +672,157 @@ ggplot(sig_summary, aes(x=lfc, y=significant_proteins, color=factor(alpha))) +
   ) +
   theme_bw()
 ```
+### Permutation test
 
+```{r}
+run_hybrid_permutation <- function(dep,
+                                   control = "C",
+                                   alpha = 0.05,
+                                   lfc = 0,
+                                   max_exact = 50000,
+                                   n_mc = 10,
+                                   seed = 1) {
+
+  set.seed(seed)
+
+  # -----------------------
+  # ORIGINAL LABELS
+  # -----------------------
+  original_labels <- dep$condition
+  n <- length(original_labels)
+
+  # -----------------------
+  # GENERATE UNIQUE PERMUTATIONS (EXACT MODE)
+  # -----------------------
+  perm_list <- gtools::permutations(
+    n = n,
+    r = n,
+    v = original_labels
+  )
+
+  perm_list <- unique(perm_list)
+
+  n_perm_exact <- nrow(perm_list)
+
+  use_exact <- n_perm_exact <= max_exact
+
+  # -----------------------
+  # OBSERVED RESULT
+  # -----------------------
+  dep_obs <- test_diff(dep, type = "control", control = control)
+  dep_obs <- add_rejections(dep_obs, alpha = alpha, lfc = lfc)
+
+  obs_sig <- sum(get_results(dep_obs)$significant, na.rm = TRUE)
+
+  # -----------------------
+  # STORAGE
+  # -----------------------
+  perm_sig <- NULL
+
+  # =========================================================
+  # MODE 1: EXACT PERMUTATION
+  # =========================================================
+  if (use_exact) {
+
+    message("Using EXACT permutation: ", n_perm_exact, " permutations")
+
+    perm_sig <- numeric(n_perm_exact)
+
+    for (i in seq_len(n_perm_exact)) {
+
+      dep_perm <- dep
+      dep_perm$condition <- perm_list[i, ]
+
+      dep_perm <- test_diff(dep_perm, type = "control", control = control)
+      dep_perm <- add_rejections(dep_perm, alpha = alpha, lfc = lfc)
+
+      perm_sig[i] <- sum(get_results(dep_perm)$significant, na.rm = TRUE)
+    }
+
+    n_perm_used <- n_perm_exact
+  }
+
+  # =========================================================
+  # MODE 2: MONTE CARLO PERMUTATION
+  # =========================================================
+  else {
+
+    message("Using MONTE CARLO permutation: ", n_mc, " iterations")
+
+    perm_sig <- numeric(n_mc)
+
+    for (i in seq_len(n_mc)) {
+
+      dep_perm <- dep
+
+      # shuffle labels (correct null model)
+      dep_perm$condition <- sample(original_labels)
+
+      dep_perm <- test_diff(dep_perm, type = "control", control = control)
+      dep_perm <- add_rejections(dep_perm, alpha = alpha, lfc = lfc)
+
+      perm_sig[i] <- sum(get_results(dep_perm)$significant, na.rm = TRUE)
+    }
+
+    n_perm_used <- n_mc
+  }
+
+  # -----------------------
+  # P-VALUE
+  # -----------------------
+  p_global <- (sum(perm_sig >= obs_sig) + 1) / (n_perm_used + 1)
+
+  # -----------------------
+  # OUTPUT
+  # -----------------------
+  list(
+    observed_significant = obs_sig,
+    permutation_distribution = perm_sig,
+    global_p_value = p_global,
+    n_permutations_used = n_perm_used,
+    mode = ifelse(use_exact, "exact", "monte_carlo")
+  )
+}
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+perm_results <- list()
+
+set.seed(123)
+
+for (prot_name in protein_sets) {
+
+  message("\nRunning permutation DEP for: ", prot_name)
+
+  protein_se <- qf[[prot_name]]
+
+  # Ask user for parameters before each run
+  alpha <- as.numeric(readline(prompt = "Enter alpha (e.g. 0.05): "))
+  lfc   <- as.numeric(readline(prompt = "Enter lfc (e.g. 1): "))
+
+  perm_results[[prot_name]] <- run_dep_permutation(
+    protein_se = protein_se,
+    n_perm = 10000,
+    control = "C",
+    alpha = alpha,
+    lfc = lfc,
+    seed = 123
+  )
+}
+
+summary_table <- do.call(rbind, lapply(names(perm_results), function(nm) {
+
+  res <- perm_results[[nm]]
+
+  data.frame(
+    dataset = nm,
+    observed_sig = res$observed_significant,
+    global_p = res$global_p_value
+  )
+}))
+
+```
 
 ## 12. Upset plot 1
 
@@ -1541,7 +1839,6 @@ merged <- merged %>%
     hmAbsFC_VA_23 = hm2(VA_vs_C_ratio.2, VA_vs_C_ratio.3)
   ) %>%
   ungroup()
-
 # -----------------------------
 # 4. Geometric mean cutoff for |log2FC|
 # -----------------------------
