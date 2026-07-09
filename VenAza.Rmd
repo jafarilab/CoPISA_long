@@ -924,6 +924,169 @@ print(up4)
 dev.off()
 ```
 
+### Hypergeometric overlap + VA-specific fraction
+
+```{r}
+library(dplyr)
+
+hypergeom_overlap <- function(set1, set2, universe) {
+
+  # observed overlap
+  k <- length(intersect(set1, set2))
+
+  # size of sets
+  K <- length(set1)
+  n <- length(set2)
+
+  # universe size
+  N <- length(universe)
+
+  # hypergeometric test
+  pval <- phyper(
+    k - 1,
+    K,
+    N - K,
+    n,
+    lower.tail = FALSE
+  )
+
+  expected <- (K * n) / N
+
+  data.frame(
+    set1_size = K,
+    set2_size = n,
+    overlap = k,
+    expected_overlap = round(expected, 2),
+    enrichment = round(k / expected, 2),
+    p_value = pval
+  )
+}
+
+
+analyze_VA_specificity <- function(res, dataset_name) {
+
+
+  # All quantified proteins = universe
+  universe <- unique(res$name)
+
+
+  # Significant protein sets
+  A <- res %>%
+    filter(A_vs_C_significant) %>%
+    pull(name)
+
+  V <- res %>%
+    filter(V_vs_C_significant) %>%
+    pull(name)
+
+  VA <- res %>%
+    filter(VA_vs_C_significant) %>%
+    pull(name)
+
+
+
+  # ----------------------------
+  # Hypergeometric tests
+  # ----------------------------
+
+  VA_vs_A <- hypergeom_overlap(
+    set1 = VA,
+    set2 = A,
+    universe = universe
+  ) %>%
+    mutate(
+      comparison = "VA vs A",
+      dataset = dataset_name
+    )
+
+
+  VA_vs_V <- hypergeom_overlap(
+    set1 = VA,
+    set2 = V,
+    universe = universe
+  ) %>%
+    mutate(
+      comparison = "VA vs V",
+      dataset = dataset_name
+    )
+
+
+  overlap_stats <- bind_rows(
+    VA_vs_A,
+    VA_vs_V
+  )
+
+
+
+  # ----------------------------
+  # VA-specific proteins
+  # ----------------------------
+
+  VA_unique <- setdiff(
+    VA,
+    union(A,V)
+  )
+
+
+  VA_fraction <- data.frame(
+    dataset = dataset_name,
+    VA_total = length(VA),
+    VA_unique = length(VA_unique),
+    VA_specific_fraction =
+      length(VA_unique) / length(VA)
+  )
+
+
+  list(
+    overlap = overlap_stats,
+    VA_specific = VA_fraction,
+    VA_unique_proteins = VA_unique
+  )
+
+}
+```
+
+```{r}
+results_statistics <- lapply(
+  names(dep_results),
+  function(x) {
+
+    analyze_VA_specificity(
+      dep_results[[x]],
+      x
+    )
+
+  }
+)
+
+names(results_statistics) <- names(dep_results)
+
+hypergeom_table <- bind_rows(
+  lapply(results_statistics, function(x)
+    x$overlap)
+)
+
+hypergeom_table
+
+VA_specific_table <- bind_rows(
+  lapply(results_statistics, function(x)
+    x$VA_specific)
+)
+
+VA_specific_table
+
+hypergeom_table <- hypergeom_table %>%
+  mutate(
+    FDR = p.adjust(
+      p_value,
+      method = "BH"
+    )
+  )
+
+hypergeom_table
+```
+
+
 
 ## 8. Upset plot 2
 
@@ -969,6 +1132,8 @@ treatment_colors <- c(
   "Short-term Cell lysate CoPISA"    = pcols[4],
   "Long-term expression proteomics"  = pcols[5]
 )
+
+upset_combined_VA <- upset_combined
 
 # ---- 4. Create UpSet plot ----
 
@@ -1040,6 +1205,8 @@ treatment_colors <- c(
   "Long-term expression proteomics"  = pcols[5]
 )
 
+upset_combined_V <- upset_combined
+
 # ---- 4. Create UpSet plot ----
 
 upset_V <- UpSetR::upset(
@@ -1110,6 +1277,8 @@ treatment_colors <- c(
   "Long-term expression proteomics"  = pcols[5]
 )
 
+upset_combined_A <- upset_combined
+
 # ---- 4. Create UpSet plot ----
 
 upset_A <- UpSetR::upset(
@@ -1161,6 +1330,74 @@ upset_VA
 upset_V
 upset_A
 ```
+
+### Hypergeometric overlap test
+
+```{r}
+pairwise_hyper <- function(upset_df){
+
+    kits <- names(upset_df)[-1]
+
+    universe <- unique(upset_df$name)
+
+    res <- list()
+
+    counter <- 1
+
+    for(i in 1:(length(kits)-1)){
+
+        for(j in (i+1):length(kits)){
+
+            set1 <- upset_df$name[upset_df[[kits[i]]]==1]
+            set2 <- upset_df$name[upset_df[[kits[j]]]==1]
+
+            N <- length(universe)
+            K <- length(set1)
+            n <- length(set2)
+
+            k <- length(intersect(set1,set2))
+
+            expected <- K*n/N
+
+            p <- phyper(
+                k-1,
+                K,
+                N-K,
+                n,
+                lower.tail=FALSE
+            )
+
+            res[[counter]] <- data.frame(
+                comparison=paste(kits[i],"vs",kits[j]),
+                set1=K,
+                set2=n,
+                overlap=k,
+                expected=expected,
+                enrichment=k/expected,
+                p_value=p
+            )
+
+            counter <- counter+1
+
+        }
+
+    }
+
+    bind_rows(res) |>
+        mutate(
+            FDR=p.adjust(p_value,"BH")
+        )
+
+}
+
+VA_overlap_stats <- pairwise_hyper(upset_combined_VA)
+
+V_overlap_stats <- pairwise_hyper(upset_combined_V)
+
+A_overlap_stats <- pairwise_hyper(upset_combined_A)
+```
+
+
 ### Extract gene name of common sets
 ```{r}
 # library(dplyr)
