@@ -194,7 +194,7 @@ Inspect
 ```{r}
 qf
 summary(qf)
-class(qf)
+class(qf) 
 names(qf)
 colData(qf)
 rowData(qf)
