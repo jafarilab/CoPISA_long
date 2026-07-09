@@ -1942,7 +1942,7 @@ spray <- ggplot(plot_data, aes(x = gmAbsFC, y = -log10(Fisher))) +
   facet_wrap(~Condition, scales = "free_y", ncol = 1) +
   theme_bw(base_size = 13) +
   theme(
-    legend.position = "top",
+    legend.position = "bottom",
     strip.background = element_rect(fill = "white", color = "black"),
     panel.grid = element_blank()
   ) +
