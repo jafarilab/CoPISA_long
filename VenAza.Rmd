@@ -2162,7 +2162,7 @@ spray <- ggplot(plot_data, aes(x = gmAbsFC, y = -log10(Fisher))) +
     low = "blue", mid = "gray90", high = "red",
     midpoint = 0,
     na.value = "gray70",
-    name = "Long-term expression proteomics log2FC"
+    name = "Long-term expression\n proteomics log2FC"
   ) +
   geom_text_repel(
     data = subset(plot_data, abs(gmAbsFC) > gm_cutoff_log2 & Fisher < 0.05),
@@ -2192,8 +2192,8 @@ spray
 # ggsave(
 #   filename = "sprayPlot.png",
 #   plot = spray,          # your ggplot object
-#   width = 17,            # width in cm
-#   height = 9,            # height in cm
+#   width = 12,            # width in cm
+#   height = 20,            # height in cm
 #   units = "cm",
 #   dpi = 300
 # )
